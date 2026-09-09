@@ -16,7 +16,7 @@
     {"name": "route_id", "type": ["null", "string"], "default": null},
     {"name": "vehicle_id", "type": ["null", "string"], "default": null},
     {"name": "observed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
-    {"name": "feed_generated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "feed_generated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-millis"}], "default": null},
     {"name": "ingested_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
     {
       "name": "timestamp_source",

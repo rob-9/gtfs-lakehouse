@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gtfs-lakehouse-poller"
+version = "0.1.0"
+description = "GTFS Realtime polling and normalization"
+requires-python = ">=3.11"
+dependencies = [
+  "gtfs-realtime-bindings==2.2.0",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest==9.1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gtfs_lakehouse"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
