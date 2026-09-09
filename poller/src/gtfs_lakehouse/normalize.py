@@ -127,6 +127,18 @@ def normalize_feed(
             )
         ]
 
+    header_error = None
+    if not message.HasField("header") or not message.header.IsInitialized():
+        header_error = "feed header or required header fields are missing"
+    elif message.header.incrementality == gtfs_realtime_pb2.FeedHeader.DIFFERENTIAL:
+        header_error = "differential feeds are not supported"
+    if header_error:
+        return [], [_dead_letter(
+            agency_id=agency_id, feed_id=feed_id, snapshot_digest=digest,
+            entity_id=None, ingested_at=ingested_at,
+            reason="validation_error", detail=header_error,
+        )]
+
     header_seconds = _optional(message.header, "timestamp")
     header_millis = header_seconds * 1000 if header_seconds else None
     events: list[NormalizedEvent] = []
@@ -135,6 +147,8 @@ def normalize_feed(
     for entity in message.entity:
         entity_id_value = _text(entity.id)
         try:
+            if not entity.IsInitialized():
+                raise ValueError("missing required fields: " + ", ".join(entity.FindInitializationErrors()))
             if entity.is_deleted:
                 raise ValueError("deleted entities are not supported")
             if not entity_id_value:
@@ -165,12 +179,25 @@ def normalize_feed(
 
             trip = source.trip if source.HasField("trip") else None
             vehicle = source.vehicle if source.HasField("vehicle") else None
+            payload["trip"] = {
+                "trip_id": _text(trip.trip_id),
+                "route_id": _text(trip.route_id),
+                "start_date": _text(trip.start_date),
+                "start_time": _text(trip.start_time),
+                "direction_id": _optional(trip, "direction_id"),
+                "schedule_relationship": _enum_name(
+                    gtfs_realtime_pb2.TripDescriptor.ScheduleRelationship,
+                    trip.schedule_relationship,
+                ),
+            } if trip is not None else None
+            payload["vehicle_id"] = _text(vehicle.id) if vehicle is not None else None
             payload_digest = payload_hash(payload)
             events.append(
                 NormalizedEvent(
                     schema_version=1,
                     event_id=event_id(
                         agency_id=agency_id,
+                        feed_id=feed_id,
                         entity_type=entity_type,
                         entity_id=entity_id_value,
                         observed_at=observed_at,
@@ -206,4 +233,3 @@ def normalize_feed(
             )
 
     return events, failures
-

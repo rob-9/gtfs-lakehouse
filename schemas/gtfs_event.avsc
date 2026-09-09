@@ -31,6 +31,22 @@
         "name": "NormalizedPayload",
         "fields": [
           {
+            "name": "trip",
+            "type": ["null", {
+              "type": "record", "name": "TripDescriptorPayload",
+              "fields": [
+                {"name": "trip_id", "type": ["null", "string"], "default": null},
+                {"name": "route_id", "type": ["null", "string"], "default": null},
+                {"name": "start_date", "type": ["null", "string"], "default": null},
+                {"name": "start_time", "type": ["null", "string"], "default": null},
+                {"name": "direction_id", "type": ["null", "int"], "default": null},
+                {"name": "schedule_relationship", "type": ["null", "string"], "default": null}
+              ]
+            }],
+            "default": null
+          },
+          {"name": "vehicle_id", "type": ["null", "string"], "default": null},
+          {
             "name": "vehicle_position",
             "type": [
               "null",

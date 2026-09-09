@@ -1,4 +1,5 @@
 from google.transit import gtfs_realtime_pb2
+import pytest
 
 from gtfs_lakehouse.normalize import normalize_feed
 
@@ -80,3 +81,57 @@ def test_corrupt_protobuf_has_snapshot_level_dead_letter() -> None:
     assert failures[0].reason == "protobuf_decode_error"
     assert failures[0].entity_id is None
 
+
+@pytest.mark.parametrize("field,value", [
+    ("trip_id", "corrected-trip"), ("route_id", "corrected-route"),
+    ("start_date", "20231114"), ("start_time", "25:15:00"),
+    ("direction_id", 1), ("schedule_relationship", 3),
+])
+def test_trip_corrections_change_identity(field, value) -> None:
+    feed = gtfs_realtime_pb2.FeedMessage.FromString(_fixture())
+    original, _ = normalize_feed(_fixture(), agency_id="demo", feed_id="a", ingested_at=1)
+    setattr(feed.entity[0].vehicle.trip, field, value)
+    corrected, failures = normalize_feed(
+        feed.SerializeToString(), agency_id="demo", feed_id="a", ingested_at=2,
+    )
+    assert not failures
+    assert original[0].event_id != corrected[0].event_id
+    assert original[0].payload_hash != corrected[0].payload_hash
+    expected = "CANCELED" if field == "schedule_relationship" else value
+    assert corrected[0].payload["trip"][field] == expected
+
+
+def test_vehicle_correction_and_feed_scope_change_identity() -> None:
+    feed = gtfs_realtime_pb2.FeedMessage.FromString(_fixture())
+    original, _ = normalize_feed(_fixture(), agency_id="demo", feed_id="a", ingested_at=1)
+    other_feed, _ = normalize_feed(_fixture(), agency_id="demo", feed_id="b", ingested_at=1)
+    feed.entity[0].vehicle.vehicle.id = "replacement-bus"
+    corrected, _ = normalize_feed(feed.SerializeToString(), agency_id="demo", feed_id="a", ingested_at=1)
+    assert len({original[0].event_id, other_feed[0].event_id, corrected[0].event_id}) == 3
+
+
+@pytest.mark.parametrize("body", [b"", b"\x0a\x00"])
+def test_missing_header_is_audited(body) -> None:
+    events, failures = normalize_feed(body, agency_id="demo", feed_id="a", ingested_at=1)
+    assert not events
+    assert len(failures) == 1
+    assert failures[0].entity_id is None
+
+
+def test_missing_coordinate_is_not_treated_as_zero() -> None:
+    feed = gtfs_realtime_pb2.FeedMessage.FromString(_fixture())
+    feed.entity[0].vehicle.position.ClearField("latitude")
+    events, failures = normalize_feed(
+        feed.SerializePartialToString(), agency_id="demo", feed_id="a", ingested_at=1,
+    )
+    assert [event.entity_type for event in events] == ["trip_update"]
+    assert len(failures) == 1
+    assert "latitude" in failures[0].detail
+
+
+def test_differential_feed_is_rejected_as_a_whole() -> None:
+    feed = gtfs_realtime_pb2.FeedMessage.FromString(_fixture())
+    feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.DIFFERENTIAL
+    events, failures = normalize_feed(feed.SerializeToString(), agency_id="demo", feed_id="a", ingested_at=1)
+    assert not events
+    assert "differential" in failures[0].detail

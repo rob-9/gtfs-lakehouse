@@ -12,6 +12,7 @@ def test_canonical_json_ignores_mapping_order() -> None:
 def test_event_id_changes_with_payload_or_observation_time() -> None:
     base = {
         "agency_id": "demo",
+        "feed_id": "vehicles",
         "entity_type": "vehicle_position",
         "entity_id": "vehicle-1",
         "observed_at": 1_700_000_000_000,
@@ -26,4 +27,3 @@ def test_event_id_changes_with_payload_or_observation_time() -> None:
 
 def test_snapshot_id_is_scoped_to_feed() -> None:
     assert snapshot_id(feed_id="a", body=b"same") != snapshot_id(feed_id="b", body=b"same")
-

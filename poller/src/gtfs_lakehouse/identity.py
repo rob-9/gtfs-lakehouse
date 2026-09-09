@@ -29,15 +29,15 @@ def payload_hash(payload: dict[str, Any]) -> str:
 def event_id(
     *,
     agency_id: str,
+    feed_id: str,
     entity_type: str,
     entity_id: str,
     observed_at: int,
     payload_digest: str,
 ) -> str:
-    identity = [agency_id, entity_type, entity_id, observed_at, payload_digest]
+    identity = [agency_id, feed_id, entity_type, entity_id, observed_at, payload_digest]
     return sha256_hex(canonical_json(identity))
 
 
 def snapshot_id(*, feed_id: str, body: bytes) -> str:
     return sha256_hex(feed_id.encode("utf-8") + b"\0" + body)
-
