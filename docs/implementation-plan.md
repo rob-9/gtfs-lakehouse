@@ -63,71 +63,150 @@ Independent Iceberg tables and Kafka transactions are not one atomic cross-syste
 
 Kafka topics:
 
-- `gtfs.raw.snapshots`: immutable protobuf bytes plus HTTP metadata, keyed by feed.
-- `gtfs.normalized.events`: normalized envelopes, keyed by agency/entity type/entity ID.
+- `gtfs.raw.snapshots`: immutable manifests with object-store references, body checksums, and HTTP metadata, keyed by agency/feed. Protobuf bodies are persisted in MinIO before publication.
+- `gtfs.normalized.events`: normalized envelopes, keyed by agency/feed/entity type/entity ID.
 - `gtfs.schedule.versions`: compacted, committed schedule-version metadata.
 - `gtfs.route.metrics`: deterministic route-window changelog.
 - `gtfs.dead_letter`: structured failures with source and reason.
 
 Start with 24 normalized-event partitions in benchmark profiles; use fewer in the laptop profile. Producers use `acks=all`, idempotence, compression, and bounded retries.
 
-Iceberg v2 tables hold raw snapshots, normalized events, enriched vehicle events, schedule metadata and entities, and route-window metrics. Audit tables are append-only. Maintenance preserves snapshots referenced by active jobs and benchmark reports.
+Iceberg v2 tables hold raw snapshot manifests, normalized events, enriched observations, schedule metadata and entities, and route-window metrics. Raw bodies remain in object storage. Audit tables are append-only. Maintenance preserves snapshots and bodies referenced by active jobs and benchmark reports.
 
 ClickHouse consumes versioned route-window rows into a staging table and exposes the latest version per agency, route, direction, service date, and window start. Rebuilds always originate from a named Iceberg snapshot.
 
 ## Delivery sequence
 
-### 1. Executable contracts
+### Current baseline
 
-- Add Avro schemas, fixture builders, and canonical hashing tests.
-- Implement conditional HTTP polling and raw snapshot records.
-- Normalize VehiclePosition and TripUpdate entities with explicit rejection reasons.
-- Run unit tests without containers.
+Implemented: conditional HTTP fetching, VehiclePosition and TripUpdate normalization, correction-sensitive event IDs, structured validation failures, Avro schemas, and 27 unit/serialization tests. The fetch function returns records; there is no running service, publisher, persistent store, or streaming job yet.
 
-Acceptance: ingesting the same fixture twice yields byte-for-byte stable identity fields, while a payload or observation-time change yields a new event ID.
+Work through the phases below in order. Each phase produces a runnable result before the next starts. Start with one synthetic agency and a fixture HTTP server, then expand to configured public feeds. External deployment and remote repository changes are outside this plan.
 
-### 2. Small local vertical slice
+### 1. Local infrastructure and fixtures
 
-- Add pinned Compose services for Kafka, Flink, MinIO, an Iceberg REST catalog, ClickHouse, Prometheus, and Grafana.
-- Create topics and tables with idempotent bootstrap jobs.
-- Publish one fixture, deduplicate and enrich it, and query one route metric.
-- Provide `make up`, `make smoke`, and `make down`.
+Deliverables:
 
-Acceptance: a clean checkout reaches healthy state and the smoke test verifies the result, not merely process liveness.
+- Add `compose.yaml` with Kafka, MinIO, an Iceberg REST catalog with persistent metadata, ClickHouse, and Flink JobManager/TaskManager services. Put Prometheus and Grafana in an optional observability profile initially.
+- Verify a compatible Java/Flink/Kafka/Iceberg connector combination in a minimal build before pinning versions. Record the tested combination in `docs/development.md`; do not choose each connector independently by newest version.
+- Add persistent named volumes, health checks, resource limits, localhost port bindings, and idempotent bucket/topic bootstrap tasks. A laptop broker uses replication factor one and is explicitly not a high-availability deployment.
+- Add a fixture HTTP server plus a tiny static GTFS dataset covering two trips, multiple stops, and a cancellation. Generate reproducible ZIP/protobuf fixtures from readable sources.
+- Add `make up`, `make down`, `make status`, and `make smoke-platform`. Normal shutdown preserves volumes; deletion requires a separate explicit command.
 
-### 3. Versioned schedule enrichment
+Acceptance: from a clean checkout, the services become healthy, an object survives a restart, the catalog responds, ClickHouse executes a query, and a fixture event can be published to Kafka and consumed. This phase does not claim a working analytics pipeline.
 
-- Validate and load stops, routes, trips, stop times, calendars, and calendar dates.
-- Select the configured schedule version valid at `observed_at`.
-- Add bounded-out-of-orderness watermarks, idle partition handling, stable operator UIDs, and deduplication TTL.
-- Preserve unmatched events with a reason instead of silently dropping them.
+Suggested commits: `chore: add local data services`, `test: add transit fixtures`, `test: add platform smoke checks`.
 
-Acceptance: late, out-of-order, duplicate, version-boundary, and missing-trip fixtures produce a deterministic golden stream.
+### 2. Continuous polling and durable publication
 
-### 4. Durable analytics
+Deliverables:
 
-- Commit normalized and enriched records to Iceberg on checkpoints.
-- Calculate delay, adherence, observed headway, missing service, and route reliability.
-- Materialize versioned aggregates in ClickHouse and document them with dbt.
-- Add a minimal operational dashboard.
+- Add a CLI and configuration file for agency/feed IDs, URLs, polling intervals, request timeouts, and maximum response sizes. Read authentication from environment variables and redact it from logs and persisted URLs.
+- Run feeds concurrently with one in-flight request per feed, bounded concurrency, exponential backoff with jitter, Retry-After handling, and graceful shutdown. A slow or failing feed must not block others.
+- Persist each successful response body to MinIO under its content-derived identity before advancing validators. Store a small durable outbox/state database on a local volume, including validators, receipt timestamps, object references, and publication status.
+- Publish a raw-snapshot manifest, normalized records, and dead letters with a stable Avro framing contract. Use one Kafka transaction per snapshot with bounded snapshot size and `read_committed` consumers. Give each poller instance a stable, exclusive transactional identity.
+- Mark outbox entries complete and advance validators only after Kafka acknowledges the transaction. Replay pending entries after restart. A crash after Kafka commit but before the local state update may produce duplicates, which retain their IDs.
+- Store large raw bodies in object storage and put references, checksums, and HTTP metadata in `gtfs.raw.snapshots`; revise its schema and the architecture description accordingly. Do not depend on arbitrary feed bodies fitting Kafka message limits.
+- Add `make poll-fixtures` and `make smoke-ingestion`.
 
-Acceptance: rebuilding ClickHouse from a fixed Iceberg snapshot matches live route-window results.
+Acceptance: a fixture is durably stored and appears in Kafka; a repeated HTTP 304 produces no new events. Restarting at each outbox/publication boundary recovers the snapshot without losing outputs. Malformed feeds produce an auditable record with a raw-object reference. Tests cover 429, timeout, oversized body, corrupt protobuf, and one failing feed alongside one healthy feed.
 
-### 5. Recovery and replay
+Suggested commits: `feat: run configured feed pollers`, `feat: persist snapshot outbox`, `feat: publish feed transactions`.
 
-- Inject TaskManager, Kafka consumer, and ClickHouse restarts during checkpoints.
-- Inject corrupt protobufs, hot keys, missing references, duplicates, and events beyond allowed lateness.
-- Run canonical inputs through both streaming transforms and a deterministic batch oracle.
+### 3. Static schedules and a reference join
 
-Acceptance: acknowledged source snapshots remain recoverable, accepted aggregate sets match, and every intentional rejection has a dead-letter record.
+Deliverables:
 
-### 6. Benchmarking
+- Add a schedule-loader CLI that accepts a local ZIP or configured URL, agency ID, and explicit effective-from instant. Hash archives and validate ZIP limits, required columns, unique identifiers, and stop/trip/route references.
+- Load agency timezones, routes, stops, trips, stop times, and service calendars. Support `calendar.txt`, `calendar_dates.txt`, or the valid combination of both. Reject unsupported frequency-based schedules explicitly.
+- Write immutable version-partitioned schedule data to Iceberg. Because tables commit independently, publish one committed version manifest referencing all table snapshot IDs only after every write succeeds. Consumers ignore incomplete versions.
+- Publish the committed manifest to Kafka through a retryable outbox. Re-running a load is idempotent. Derive effective ranges from committed manifests with an explicit policy for overlaps and retroactive versions.
+- Implement a small batch reference join with golden expected output. Resolve trip instances, service dates, calendar exceptions, times beyond 24:00, timezone transitions, cancellation status, and explicit unmatched reasons.
+- Require realtime ingestion and enrichment to preserve the selected schedule version for subsequent replay.
 
-- Add deterministic steady, burst, disorder, duplicate, hot-agency, replay, and failure scenarios.
-- Capture hardware, image digests, JVM settings, parallelism, partitions, checkpoint configuration, event sizes, and compression.
-- Warm up, repeat each scenario at least three times, and publish median plus variance.
+Acceptance: loading the same archive twice creates one logical version. An interrupted multi-table load is never visible as ready. Golden cases cover midnight, daylight-saving changes, adjacent schedule versions, removed service, canceled trips, and missing references.
 
-Acceptance: reports include throughput; p50, p95, and p99 ingestion-to-query latency; source freshness; watermark and Kafka lag; checkpoint duration; recovery time; resource use; and aggregate parity.
+Suggested commits: `feat: validate static schedules`, `feat: load versioned schedules`, `test: define schedule join fixtures`.
+
+### 4. Flink event-time processing and Iceberg history
+
+Deliverables:
+
+- Add the Java Maven job, generated Avro bindings, pinned connectors, stable operator UIDs, and a build/deployment command for local Compose.
+- Read committed normalized Kafka events, validate event-time bounds, assign watermarks with idle-partition detection, and deduplicate by event ID using event-time cleanup. Define the event age cutoff before evicting deduplication state so old retries cannot become new accepted records.
+- Load committed schedule manifests into bounded version-aware lookup state. Start with the fixture-sized schedule set; document its memory limit. Buffer events waiting for a known version within a bounded limit, then audit unresolved events. Retain historical versions needed by allowed lateness and replay.
+- Persist the admission decision and selected schedule version. Watermark-dependent rejection can vary with delivery order; replay correctness must use the recorded accepted input set. A replay admitting additional late data is a new result generation.
+- Add durable object-store checkpoints and checkpoint-aligned Iceberg sinks for normalized history, enriched observations, and rejection/late-event audit records. Archive raw manifests separately, retaining the referenced bodies in MinIO.
+- Clarify logical uniqueness: recovery exactly-once does not remove every upstream duplicate across an unbounded history. Raw history is at least once; the canonical replay dataset uses stable IDs and the recorded admission policy.
+- Add `make submit` and `make smoke-enrichment`.
+
+Acceptance: duplicate and out-of-order fixtures produce the golden enriched result; idle partitions do not indefinitely stall watermarks. After a TaskManager restart, committed accepted events remain logically unique and every rejected input is traceable. A fixed checkpoint restores operator state and schedule selection.
+
+Suggested commits: `feat: add Flink event processing`, `feat: join schedule versions`, `feat: persist Iceberg history`.
+
+### 5. Metrics and ClickHouse queries
+
+Deliverables:
+
+- Write `docs/metrics.md` before aggregate code: specify each metric's observation unit, eligibility, grouping key, event clock, window, null handling, and denominator. Repeated predictions for one trip/stop must not be treated as independent arrivals.
+- Implement reported delay distributions and schedule adherence first. Separately implement a stop-arrival detector for observed headway, deviation, and bunching, then scheduled-versus-observed service coverage after a configurable grace period. Keep cancellation counts and absent telemetry separate.
+- Finalize route/stop aggregate schemas with serving generation, window boundaries, sample counts, input digest, and revision. Start with final windows only; add provisional updates and checkpointed revisions in a separate commit after final-window parity passes.
+- Persist final aggregates to Iceberg and emit them to Kafka with checkpointed transactions. Document that these outputs converge after recovery but are not atomically visible together.
+- Add a ClickHouse ingestion worker that commits Kafka offsets only after a successful insert. Retried rows must be harmless. Expose latest-row views using explicit key/version selection, without relying on background merges for query correctness; avoid summing correction rows in append-only materialized views.
+- Add route reliability and stop delay queries, a query CLI, and `make smoke`. The end-to-end smoke command starts a fresh fixture run, waits for final windows, and checks exact expected query results.
+
+Acceptance: the fixture produces known delay and headway values, duplicate deliveries do not inflate counts, cancellations are classified correctly, and a revised window replaces the old result. Live ClickHouse values match final Iceberg aggregates for the same serving generation.
+
+Suggested commits: `docs: define transit metrics`, `feat: aggregate route reliability`, `feat: serve ClickHouse metrics`, `test: verify end-to-end analytics`.
+
+### 6. Data quality and operational visibility
+
+Deliverables:
+
+- Add dbt-clickhouse models and tests for logical key uniqueness, schedule relationships, sample counts, coordinate validity, and metric denominators. Test deduplicated serving views, since physical staging retries are expected.
+- Instrument poll attempts, successes, errors, raw/outbox backlog, feed freshness, Kafka lag, watermarks, deduplication, unmatched events, checkpoint health, sink retries, and query visibility.
+- Provision Prometheus and Grafana with one pipeline-health dashboard and one transit dashboard. Add a small runbook for a stalled feed, failed checkpoint, outbox backlog, and lagging sink.
+- Measure source freshness separately from ingestion-to-query latency. Closed-window latency includes window duration plus allowed lateness; do not compare it to a two-second provisional-update target. Use external query probes and sampled correlation records instead of calling sink insertion time query visibility.
+
+Acceptance: one injected feed failure and one stopped sink visibly change the appropriate panels and recover after restart. dbt catches a deliberately invalid fixture. Dashboard provisioning works from a clean checkout.
+
+Suggested commits: `feat: add serving quality checks`, `feat: add pipeline dashboards`, `docs: add operations runbook`.
+
+### 7. Replay, rebuilding, and failure recovery
+
+Deliverables:
+
+- Add a replay command accepting named Iceberg snapshot IDs, schedule manifests, an accepted-input policy, a time range, and a new serving generation. Use a manifest to pin the collection of independently committed table snapshots.
+- Run production transformations in bounded mode and compare them with an independently implemented batch oracle using shared golden fixtures. Canonically select superseding trip/stop observations and define tie-breaking rules before comparing aggregates.
+- Rebuild ClickHouse in a separate generation, compare keys, values, counts, and input digests, then offer a local command to switch the serving view. Keep the previous generation available for rollback.
+- Automate poller crash points, TaskManager failures during checkpoints, Kafka transaction recovery, sink restarts, and partial multi-sink commits. Retain logs, input manifests, mismatch reports, and recovery timings.
+- Add conservative Iceberg maintenance commands for compaction and snapshot expiration, with explicit protection for checkpoint, replay, and benchmark references. Keep raw-body cleanup disabled until reference tracking is tested.
+
+Acceptance: the fault suite accounts for every acknowledged snapshot, reproduces the accepted aggregate set, reports all intentional rejections, and rebuilds ClickHouse without double counting. Failed parity blocks the serving switch.
+
+Suggested commits: `feat: replay pinned lakehouse snapshots`, `test: compare batch and stream results`, `test: exercise checkpoint failures`, `feat: add guarded lake maintenance`.
+
+### 8. Reproducible benchmarks
+
+Deliverables:
+
+- Add a seeded generator for steady, burst, disorder, duplicate, hot-agency, replay, and failure workloads. Preserve canonical input manifests and distinguish synthetic agencies from real feeds.
+- Keep a small correctness workload for routine runs. Add explicit larger profiles, including a one-billion-event replay, only after measuring storage requirements and validating the generator at smaller scale.
+- Record hardware, image digests, dependency versions, input size/distribution, JVM settings, state backend, parallelism, partitions, compression, checkpoint interval, watermark policy, warm-up, and measurement duration.
+- Repeat each measured scenario at least three times and report median plus spread. Include throughput, latency quantiles, source freshness, watermark/Kafka lag, checkpoint duration, recovery time, CPU, memory, disk activity, and parity results.
+- Bound the workload generator and visibility probes so their own saturation is detectable. Use synchronized clocks or a single measurement host for latency measurements.
+
+Acceptance: `make benchmark-small` produces raw observations and a report that another developer can reproduce. Performance claims are gated on passing correctness and complete artifacts; the large throughput targets remain unclaimed until measured.
+
+Suggested commits: `feat: generate benchmark workloads`, `feat: report benchmark evidence`.
+
+## Implementation workflow
+
+Keep code, focused tests, and necessary documentation together in small Conventional Commits. The suggested subjects above are boundaries, not a requirement to commit unverified intermediate work. Leave the README as a short description, current status, and a few working commands; put design detail and runbooks under `docs/`.
+
+Use unit and schema tests on every relevant change, service integration tests when a storage or messaging boundary changes, and the full fixture smoke test once phase 5 lands. Add CI configuration locally for these checks; fault and large benchmark suites run separately from the normal test path. A phase is complete only when its acceptance checks pass, and any untested environment dependency is recorded explicitly.
+
+The first useful ingestion milestone is phase 2: continuously fetch, store, and publish a fixture. The first queryable lakehouse milestone is phase 5. Recovery evidence and performance claims come after those paths work.
 
 ## Guardrails
 
