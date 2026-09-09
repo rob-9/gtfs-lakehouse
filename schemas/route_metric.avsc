@@ -10,7 +10,7 @@
     {"name": "service_date", "type": {"type": "int", "logicalType": "date"}},
     {"name": "window_start", "type": {"type": "long", "logicalType": "timestamp-millis"}},
     {"name": "window_end", "type": {"type": "long", "logicalType": "timestamp-millis"}},
-    {"name": "version", "type": "long", "doc": "Monotone count of distinct accepted input events for this window."},
+    {"name": "version", "type": "long", "doc": "Checkpointed monotone revision per aggregate key within one serving generation; rebuilds use a separate generation."},
     {"name": "input_digest", "type": "string"},
     {"name": "vehicle_count", "type": "long"},
     {"name": "scheduled_trip_count", "type": "long"},

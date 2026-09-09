@@ -34,16 +34,30 @@ The poller owns fetching, protobuf decoding, envelope normalization, and dead-le
 
 Every normalized entity uses an immutable envelope containing:
 
-- `event_id`: SHA-256 of a canonical tuple containing agency, entity type, entity ID, observation time, and payload hash.
+- `event_id`: SHA-256 of a canonical tuple containing agency, feed, entity type, entity ID, observation time, and payload hash. Entity IDs are feed-scoped; cross-feed vehicle reconciliation is a separate enrichment concern.
 - `agency_id`, `feed_id`, `entity_type`, `entity_id`, `trip_id`, `route_id`, and optional `vehicle_id`.
 - `observed_at`, `feed_generated_at`, and `ingested_at`, all UTC epoch milliseconds.
 - `timestamp_source`, which records whether event time came from the entity or feed header.
 - Optional `schedule_version`, populated only after enrichment.
-- Typed `payload` and a SHA-256 `payload_hash` calculated from canonical JSON.
+- Typed `payload` and a SHA-256 `payload_hash` calculated from canonical JSON. The payload includes the trip descriptor (trip, route, direction, start date/time, and schedule relationship) and vehicle ID so corrections cannot collide with previous observations.
 
 GTFS-RT timestamps are not uniformly present. Vehicle timestamps are preferred; otherwise the feed-header timestamp is used and marked. Messages without either timestamp are rejected. Pipeline latency and source freshness are reported separately.
 
 Static feed versions are content-addressed. Operators must provide an `effective_from` instant for each archive; it is not inferred from service calendars. A later version closes the previous version's range only after its Iceberg transaction commits.
+
+Feed headers and protobuf required fields are validated before normalization. Differential feeds are rejected until their state and deletion semantics are implemented. Raw snapshot persistence and Kafka publication remain pending; polling currently returns records to its caller. The caller must persist a snapshot and acknowledge its outputs before adopting returned HTTP validators, otherwise a crash followed by HTTP 304 could skip unpersisted data.
+
+## Metric and replay semantics
+
+TripUpdate arrival times and delays may be predictions. Label these as reported predictions; do not count them as observed stop arrivals. Derive observed headway only from an explicit stop-arrival detector with golden fixtures and documented tolerances. Define missing service against scheduled trips after a grace period, and distinguish missing telemetry from confirmed canceled service. Follow the [GTFS Realtime reference](https://old.gtfs.org/realtime/reference/) for trip-instance and cancellation semantics.
+
+Resolve service dates in the agency timezone using trip start dates where supplied; schedule times beyond 24:00 belong to the same service day. Include overnight and daylight-saving fixtures before implementing schedule joins. Declare frequency-based trips unsupported until the loader handles `frequencies.txt`.
+
+Define the watermark allowance, accepted-lateness horizon, and deduplication retention together. Events beyond that horizon go to a late-event audit stream and can be included in a separate replay. A processing-time TTL alone cannot establish deterministic event-time deduplication.
+
+The initial aggregate implementation emits one final row per closed window. Late revisions require a checkpointed revision counter per key and a single writer; input count alone is not a safe version across independent runs. Rebuild into a separate serving generation, validate parity, then switch the serving view. Compare final keys, values, and canonical input digests with the oracle, not arrival-order-dependent revision counters. The route metric schema remains provisional until these semantics are implemented.
+
+Independent Iceberg tables and Kafka transactions are not one atomic cross-system transaction. Recovery tests must cover failure between sink commits and verify eventual parity, rather than promise atomic visibility across stores.
 
 ## Topics and storage
 
