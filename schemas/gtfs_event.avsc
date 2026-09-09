@@ -1,0 +1,89 @@
+{
+  "type": "record",
+  "name": "GtfsEvent",
+  "namespace": "io.gtfs.lakehouse.avro",
+  "fields": [
+    {"name": "schema_version", "type": "int", "default": 1},
+    {"name": "event_id", "type": "string"},
+    {"name": "agency_id", "type": "string"},
+    {"name": "feed_id", "type": "string"},
+    {
+      "name": "entity_type",
+      "type": {"type": "enum", "name": "EntityType", "symbols": ["vehicle_position", "trip_update"]}
+    },
+    {"name": "entity_id", "type": "string"},
+    {"name": "trip_id", "type": ["null", "string"], "default": null},
+    {"name": "route_id", "type": ["null", "string"], "default": null},
+    {"name": "vehicle_id", "type": ["null", "string"], "default": null},
+    {"name": "observed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "feed_generated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "ingested_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {
+      "name": "timestamp_source",
+      "type": {"type": "enum", "name": "TimestampSource", "symbols": ["entity", "feed_header"]}
+    },
+    {"name": "schedule_version", "type": ["null", "string"], "default": null},
+    {"name": "payload_hash", "type": "string"},
+    {
+      "name": "payload",
+      "type": {
+        "type": "record",
+        "name": "NormalizedPayload",
+        "fields": [
+          {
+            "name": "vehicle_position",
+            "type": [
+              "null",
+              {
+                "type": "record",
+                "name": "VehiclePositionPayload",
+                "fields": [
+                  {"name": "latitude", "type": "double"},
+                  {"name": "longitude", "type": "double"},
+                  {"name": "bearing", "type": ["null", "double"], "default": null},
+                  {"name": "speed", "type": ["null", "double"], "default": null},
+                  {"name": "stop_id", "type": ["null", "string"], "default": null},
+                  {"name": "current_stop_sequence", "type": ["null", "int"], "default": null},
+                  {"name": "current_status", "type": ["null", "string"], "default": null}
+                ]
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "trip_update",
+            "type": [
+              "null",
+              {
+                "type": "record",
+                "name": "TripUpdatePayload",
+                "fields": [
+                  {
+                    "name": "stop_time_updates",
+                    "type": {
+                      "type": "array",
+                      "items": {
+                        "type": "record",
+                        "name": "StopTimeUpdate",
+                        "fields": [
+                          {"name": "stop_sequence", "type": ["null", "int"], "default": null},
+                          {"name": "stop_id", "type": ["null", "string"], "default": null},
+                          {"name": "arrival_delay", "type": ["null", "int"], "default": null},
+                          {"name": "arrival_time", "type": ["null", "long"], "default": null},
+                          {"name": "departure_delay", "type": ["null", "int"], "default": null},
+                          {"name": "departure_time", "type": ["null", "long"], "default": null},
+                          {"name": "schedule_relationship", "type": ["null", "string"], "default": null}
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "default": null
+          }
+        ]
+      }
+    }
+  ]
+}

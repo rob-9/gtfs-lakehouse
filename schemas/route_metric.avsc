@@ -1,0 +1,26 @@
+{
+  "type": "record",
+  "name": "RouteMetric",
+  "namespace": "io.gtfs.lakehouse.avro",
+  "fields": [
+    {"name": "schema_version", "type": "int", "default": 1},
+    {"name": "agency_id", "type": "string"},
+    {"name": "route_id", "type": "string"},
+    {"name": "direction_id", "type": ["null", "int"], "default": null},
+    {"name": "service_date", "type": {"type": "int", "logicalType": "date"}},
+    {"name": "window_start", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "window_end", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "version", "type": "long", "doc": "Monotone count of distinct accepted input events for this window."},
+    {"name": "input_digest", "type": "string"},
+    {"name": "vehicle_count", "type": "long"},
+    {"name": "scheduled_trip_count", "type": "long"},
+    {"name": "observed_trip_count", "type": "long"},
+    {"name": "missing_service_rate", "type": ["null", "double"], "default": null},
+    {"name": "mean_delay_seconds", "type": ["null", "double"], "default": null},
+    {"name": "p50_delay_seconds", "type": ["null", "double"], "default": null},
+    {"name": "p95_delay_seconds", "type": ["null", "double"], "default": null},
+    {"name": "mean_headway_seconds", "type": ["null", "double"], "default": null},
+    {"name": "headway_deviation_seconds", "type": ["null", "double"], "default": null},
+    {"name": "bunching_rate", "type": ["null", "double"], "default": null}
+  ]
+}
