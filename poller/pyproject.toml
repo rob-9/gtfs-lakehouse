@@ -8,8 +8,13 @@ version = "0.1.0"
 description = "GTFS Realtime polling and normalization"
 requires-python = ">=3.11"
 dependencies = [
+  "boto3>=1.35,<2",
+  "confluent-kafka>=2.6,<3",
+  "fastavro>=1.10,<2",
   "gtfs-realtime-bindings==2.2.0",
   "httpx==0.28.1",
+  "prometheus-client>=0.21,<1",
+  "pyiceberg[pyarrow]>=0.10,<0.11",
 ]
 
 [project.optional-dependencies]

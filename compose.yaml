@@ -1,0 +1,115 @@
+name: gtfs-lakehouse
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    ports: ["127.0.0.1:9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    volumes: [kafka-data:/var/lib/kafka/data]
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD-SHELL, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: lakehouse
+      MINIO_ROOT_PASSWORD: local-lakehouse-secret
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: [minio-data:/data]
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9000/minio/health/live]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  catalog-init:
+    image: apache/iceberg-rest-fixture:1.10.1
+    user: "0:0"
+    entrypoint: [chown, "1000:1000", /catalog]
+    volumes: [catalog-data:/catalog]
+  catalog:
+    image: apache/iceberg-rest-fixture:1.10.1
+    environment:
+      AWS_ACCESS_KEY_ID: lakehouse
+      AWS_SECRET_ACCESS_KEY: local-lakehouse-secret
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_URI: jdbc:sqlite:/catalog/catalog.db
+    ports: ["127.0.0.1:8181:8181"]
+    volumes: [catalog-data:/catalog]
+    depends_on:
+      minio: {condition: service_healthy}
+      catalog-init: {condition: service_completed_successfully}
+    mem_limit: 768m
+  clickhouse:
+    image: clickhouse:26.3.29.7
+    ports: ["127.0.0.1:8123:8123"]
+    environment:
+      CLICKHOUSE_USER: lakehouse
+      CLICKHOUSE_PASSWORD: local-lakehouse-secret
+      CLICKHOUSE_DB: gtfs
+    volumes: [clickhouse-data:/var/lib/clickhouse]
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD, clickhouse-client, --user, lakehouse, --password, local-lakehouse-secret, --query, SELECT 1]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  jobmanager:
+    image: flink:1.20.5-java17
+    command: jobmanager
+    ports: ["127.0.0.1:8081:8081"]
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: flink-s3-fs-hadoop-1.20.5.jar
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 1024m
+        parallelism.default: 1
+        s3.endpoint: http://minio:9000
+        s3.path.style.access: true
+        s3.access-key: lakehouse
+        s3.secret-key: local-lakehouse-secret
+    volumes: [./flink-job/target:/opt/flink/usrlib:ro]
+    mem_limit: 1400m
+  taskmanager:
+    image: flink:1.20.5-java17
+    command: taskmanager
+    environment:
+      ENABLE_BUILT_IN_PLUGINS: flink-s3-fs-hadoop-1.20.5.jar
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 1536m
+        parallelism.default: 1
+        s3.endpoint: http://minio:9000
+        s3.path.style.access: true
+        s3.access-key: lakehouse
+        s3.secret-key: local-lakehouse-secret
+    volumes: [./flink-job/target:/opt/flink/usrlib:ro]
+    depends_on: [jobmanager]
+    mem_limit: 2g
+volumes:
+  kafka-data:
+  minio-data:
+  catalog-data:
+  clickhouse-data:

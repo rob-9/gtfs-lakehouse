@@ -1,0 +1,6 @@
+# Fixture service is local; add real endpoints explicitly when needed.
+[[feeds]]
+agency_id = "demo"
+feed_id = "realtime"
+url = "http://127.0.0.1:8090/feed.pb"
+interval_seconds = 5
