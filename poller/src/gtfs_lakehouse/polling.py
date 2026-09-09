@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
+from time import time_ns
 
 import httpx
 
@@ -26,6 +28,8 @@ class PollState:
 
 @dataclass(frozen=True, slots=True)
 class PollResult:
+    """Adopt state only after the snapshot and its outputs are durably acknowledged."""
+
     snapshot: RawSnapshot | None
     state: PollState
 
@@ -35,7 +39,7 @@ async def fetch_feed(
     config: FeedConfig,
     state: PollState,
     *,
-    fetched_at: int,
+    clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
 ) -> PollResult:
     headers = {"Accept": "application/x-protobuf"}
     if state.etag:
@@ -50,8 +54,17 @@ async def fetch_feed(
         follow_redirects=True,
     )
     if response.status_code == 304:
-        return PollResult(snapshot=None, state=state)
+        return PollResult(snapshot=None, state=PollState(
+            etag=response.headers.get("etag", state.etag),
+            last_modified=response.headers.get("last-modified", state.last_modified),
+        ))
     response.raise_for_status()
+    if response.status_code != 200:
+        raise httpx.HTTPStatusError(
+            "expected a complete feed response (200)",
+            request=response.request, response=response,
+        )
+    fetched_at = clock()
 
     next_state = PollState(
         etag=response.headers.get("etag"),
@@ -70,4 +83,3 @@ async def fetch_feed(
         body=response.content,
     )
     return PollResult(snapshot=snapshot, state=next_state)
-
