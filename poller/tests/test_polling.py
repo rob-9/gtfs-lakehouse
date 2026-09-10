@@ -75,3 +75,15 @@ def test_not_modified_refreshes_validators():
             assert result.state == PollState("new", "yesterday")
 
     asyncio.run(run())
+
+
+def test_oversized_response_is_rejected_and_url_credentials_are_redacted():
+    from gtfs_lakehouse.polling import redact_url
+    assert redact_url("https://user:secret@example.test/feed?token=private") == "https://example.test/feed"
+
+    async def run():
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"too large"))
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(ValueError, match="size limit"):
+                await fetch_feed(client, FeedConfig("a", "f", "https://example.test", max_response_bytes=3), PollState())
+    asyncio.run(run())

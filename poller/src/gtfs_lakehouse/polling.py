@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Callable
 from time import time_ns
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -18,6 +19,7 @@ class FeedConfig:
     feed_id: str
     url: str
     timeout_seconds: float = 15.0
+    max_response_bytes: int = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,12 +49,14 @@ async def fetch_feed(
     if state.last_modified:
         headers["If-Modified-Since"] = state.last_modified
 
-    response = await client.get(
-        config.url,
-        headers=headers,
-        timeout=config.timeout_seconds,
-        follow_redirects=True,
-    )
+    async with client.stream("GET", config.url, headers=headers,
+                             timeout=config.timeout_seconds, follow_redirects=False) as response:
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > config.max_response_bytes:
+                raise ValueError("feed exceeds configured response size limit")
+        content = bytes(body)
     if response.status_code == 304:
         return PollResult(snapshot=None, state=PollState(
             etag=response.headers.get("etag", state.etag),
@@ -71,15 +75,20 @@ async def fetch_feed(
         last_modified=response.headers.get("last-modified"),
     )
     snapshot = RawSnapshot(
-        snapshot_id=snapshot_id(feed_id=config.feed_id, body=response.content),
+        snapshot_id=snapshot_id(feed_id=config.feed_id, body=content),
         agency_id=config.agency_id,
         feed_id=config.feed_id,
         fetched_at=fetched_at,
-        url=str(response.url),
+        url=redact_url(str(response.url)),
         status_code=response.status_code,
         content_type=response.headers.get("content-type"),
         etag=next_state.etag,
         last_modified=next_state.last_modified,
-        body=response.content,
+        body=content,
     )
     return PollResult(snapshot=snapshot, state=next_state)
+
+
+def redact_url(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, "", ""))
