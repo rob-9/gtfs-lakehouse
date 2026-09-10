@@ -1,0 +1,17 @@
+*
+!Dockerfile
+!poller/
+!poller/pyproject.toml
+!poller/uv.lock
+!poller/src/
+!poller/src/**
+!schemas/
+!schemas/**
+!tests/
+!tests/fixtures/
+!tests/fixtures/**
+!clickhouse/
+!clickhouse/**
+!config/
+!config/**
+**/__pycache__/

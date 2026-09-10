@@ -17,13 +17,13 @@ TOPICS = [
 
 
 def kafka_address():
-    return os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    return os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
 
 
 def s3():
     return boto3.client(
         "s3",
-        endpoint_url=os.getenv("S3_ENDPOINT", "http://localhost:9000"),
+        endpoint_url=os.getenv("S3_ENDPOINT", "http://127.0.0.1:9000"),
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "lakehouse"),
         aws_secret_access_key=os.getenv(
             "AWS_SECRET_ACCESS_KEY", "local-lakehouse-secret"

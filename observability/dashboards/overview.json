@@ -1,0 +1,14 @@
+{
+  "title": "GTFS lakehouse",
+  "uid": "gtfs-lakehouse",
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {"id": 1, "title": "Running Flink jobs", "type": "stat", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 5}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_flink_running_jobs", "refId": "A"}]},
+    {"id": 2, "title": "Final route windows", "type": "stat", "gridPos": {"x": 6, "y": 0, "w": 6, "h": 5}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_serving_windows", "refId": "A"}]},
+    {"id": 3, "title": "Checkpoint duration (ms)", "type": "timeseries", "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_flink_checkpoint_duration_ms", "refId": "A"}]},
+    {"id": 4, "title": "Failed checkpoints", "type": "timeseries", "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_flink_failed_checkpoints", "refId": "A"}]},
+    {"id": 5, "title": "Exporter healthy", "type": "stat", "gridPos": {"x": 12, "y": 0, "w": 6, "h": 5}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_exporter_up", "refId": "A"}]}
+  ]
+}

@@ -56,7 +56,7 @@ def realtime(timestamp: int = EPOCH) -> bytes:
     return feed.SerializeToString(deterministic=True)
 
 
-def serve(port: int = 8090):
+def serve(port: int = 8090, host: str = "127.0.0.1"):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path not in ("/feed.pb", "/static.zip"):
@@ -75,4 +75,4 @@ def serve(port: int = 8090):
             self.end_headers()
             self.wfile.write(body)
 
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    ThreadingHTTPServer((host, port), Handler).serve_forever()

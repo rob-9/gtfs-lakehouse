@@ -1,5 +1,56 @@
 name: gtfs-lakehouse
+x-client-environment: &client-environment
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  S3_ENDPOINT: http://minio:9000
+  CATALOG_URI: http://catalog:8181
+  CLICKHOUSE_URL: http://clickhouse:8123
+  FLINK_URL: http://jobmanager:8081
 services:
+  fixtures:
+    build: .
+    image: gtfs-lakehouse-python:local
+    profiles: [workers]
+    command: [fixtures, --host, "0.0.0.0"]
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8090/feed.pb')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  poller:
+    build: .
+    image: gtfs-lakehouse-python:local
+    profiles: [workers]
+    command: [poll, --config, config/container-feeds.toml, --state-dir, /app/var/poller]
+    environment: *client-environment
+    volumes: [poller-data:/app/var/poller]
+    mem_limit: 256m
+    restart: unless-stopped
+    depends_on:
+      fixtures: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+      minio: {condition: service_healthy}
+  serving:
+    build: .
+    image: gtfs-lakehouse-python:local
+    profiles: [workers]
+    command: [serve]
+    environment: *client-environment
+    mem_limit: 256m
+    restart: unless-stopped
+    depends_on:
+      kafka: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+  exporter:
+    build: .
+    image: gtfs-lakehouse-python:local
+    profiles: [observability]
+    command: [monitor]
+    environment: *client-environment
+    ports: ["127.0.0.1:9108:9108"]
+    mem_limit: 256m
+    restart: unless-stopped
   kafka:
     image: apache/kafka:3.9.1
     ports: ["127.0.0.1:9092:9092"]
@@ -7,7 +58,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:29093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://127.0.0.1:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -55,6 +106,7 @@ services:
       CATALOG_S3_ENDPOINT: http://minio:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
       CATALOG_URI: jdbc:sqlite:/catalog/catalog.db
+      CATALOG_CLIENTS: "1"
     ports: ["127.0.0.1:8181:8181"]
     volumes: [catalog-data:/catalog]
     depends_on:
@@ -69,7 +121,7 @@ services:
       CLICKHOUSE_PASSWORD: local-lakehouse-secret
       CLICKHOUSE_DB: gtfs
     volumes: [clickhouse-data:/var/lib/clickhouse]
-    mem_limit: 1g
+    mem_limit: 2g
     healthcheck:
       test: [CMD, clickhouse-client, --user, lakehouse, --password, local-lakehouse-secret, --query, SELECT 1]
       interval: 5s
@@ -89,27 +141,62 @@ services:
         s3.path.style.access: true
         s3.access-key: lakehouse
         s3.secret-key: local-lakehouse-secret
-    volumes: [./flink-job/target:/opt/flink/usrlib:ro]
+    volumes: [./flink-job/target:/opt/jobs:ro]
     mem_limit: 1400m
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8081/overview]
+      interval: 5s
+      timeout: 3s
+      retries: 30
   taskmanager:
     image: flink:1.20.5-java17
     command: taskmanager
+    restart: unless-stopped
     environment:
       ENABLE_BUILT_IN_PLUGINS: flink-s3-fs-hadoop-1.20.5.jar
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         taskmanager.numberOfTaskSlots: 2
-        taskmanager.memory.process.size: 1536m
+        taskmanager.memory.process.size: 2048m
+        taskmanager.memory.jvm-metaspace.size: 384m
+        taskmanager.memory.managed.fraction: 0.1
         parallelism.default: 1
         s3.endpoint: http://minio:9000
         s3.path.style.access: true
         s3.access-key: lakehouse
         s3.secret-key: local-lakehouse-secret
-    volumes: [./flink-job/target:/opt/flink/usrlib:ro]
+    volumes: [./flink-job/target:/opt/jobs:ro]
     depends_on: [jobmanager]
-    mem_limit: 2g
+    mem_limit: 2560m
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://jobmanager:8081/taskmanagers | grep -q slotsNumber"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [observability]
+    ports: ["127.0.0.1:9090:9090"]
+    volumes: [./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro, prometheus-data:/prometheus]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    mem_limit: 256m
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [observability]
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: local-lakehouse-secret
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/datasources.yml:/etc/grafana/provisioning/datasources/gtfs.yml:ro
+      - ./observability/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/gtfs.yml:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
+    mem_limit: 256m
 volumes:
   kafka-data:
   minio-data:
   catalog-data:
   clickhouse-data:
+  prometheus-data:
+  grafana-data:
+  poller-data:

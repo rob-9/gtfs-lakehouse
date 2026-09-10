@@ -2,6 +2,7 @@
 
 import json
 import os
+from functools import lru_cache
 
 import pyarrow as pa
 from pyiceberg.catalog import load_catalog
@@ -12,13 +13,15 @@ from .identity import canonical_json, sha256_hex
 from .schedules import parse_archive
 
 
+@lru_cache(maxsize=1)
 def catalog():
+    os.environ.setdefault("PYICEBERG_MAX_WORKERS", "4")
     return load_catalog(
         "local",
         type="rest",
-        uri=os.getenv("CATALOG_URI", "http://localhost:8181"),
+        uri=os.getenv("CATALOG_URI", "http://127.0.0.1:8181"),
         **{
-            "s3.endpoint": os.getenv("S3_ENDPOINT", "http://localhost:9000"),
+            "s3.endpoint": os.getenv("S3_ENDPOINT", "http://127.0.0.1:9000"),
             "s3.access-key-id": os.getenv("AWS_ACCESS_KEY_ID", "lakehouse"),
             "s3.secret-access-key": os.getenv(
                 "AWS_SECRET_ACCESS_KEY", "local-lakehouse-secret"

@@ -40,10 +40,13 @@ def remember(record):
 def stop(job):
     stopped = subprocess.run(
         FLINK + ["stop", "--savepointPath", "s3://checkpoints/savepoints/", job["jid"]],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if stopped.returncode:
+        print(stopped.stdout + stopped.stderr, flush=True)
+        stopped.check_returncode()
     match = re.search(r"(s3://checkpoints/savepoints/savepoint-[^\s]+)", stopped.stdout)
     if not match:
         raise RuntimeError(

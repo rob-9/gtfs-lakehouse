@@ -1,0 +1,5 @@
+[[feeds]]
+agency_id = "demo"
+feed_id = "realtime"
+url = "http://fixtures:8090/feed.pb"
+interval_seconds = 5
