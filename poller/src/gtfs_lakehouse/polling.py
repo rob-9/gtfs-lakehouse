@@ -49,8 +49,13 @@ async def fetch_feed(
     if state.last_modified:
         headers["If-Modified-Since"] = state.last_modified
 
-    async with client.stream("GET", config.url, headers=headers,
-                             timeout=config.timeout_seconds, follow_redirects=False) as response:
+    async with client.stream(
+        "GET",
+        config.url,
+        headers=headers,
+        timeout=config.timeout_seconds,
+        follow_redirects=False,
+    ) as response:
         body = bytearray()
         async for chunk in response.aiter_bytes():
             body.extend(chunk)
@@ -58,15 +63,21 @@ async def fetch_feed(
                 raise ValueError("feed exceeds configured response size limit")
         content = bytes(body)
     if response.status_code == 304:
-        return PollResult(snapshot=None, state=PollState(
-            etag=response.headers.get("etag", state.etag),
-            last_modified=response.headers.get("last-modified", state.last_modified),
-        ))
+        return PollResult(
+            snapshot=None,
+            state=PollState(
+                etag=response.headers.get("etag", state.etag),
+                last_modified=response.headers.get(
+                    "last-modified", state.last_modified
+                ),
+            ),
+        )
     response.raise_for_status()
     if response.status_code != 200:
         raise httpx.HTTPStatusError(
             "expected a complete feed response (200)",
-            request=response.request, response=response,
+            request=response.request,
+            response=response,
         )
     fetched_at = clock()
 
@@ -91,4 +102,6 @@ async def fetch_feed(
 
 def redact_url(url: str) -> str:
     parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, "", ""))
+    return urlunsplit(
+        (parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, "", "")
+    )

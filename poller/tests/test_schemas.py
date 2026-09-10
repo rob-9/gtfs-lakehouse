@@ -22,7 +22,10 @@ def test_schema_parses(name):
 def test_normalized_entities_round_trip_through_avro():
     schema = avro.schema.parse((SCHEMAS / "gtfs_event.avsc").read_text())
     events, failures = normalize_feed(
-        _fixture(), agency_id="demo", feed_id="vehicles", ingested_at=1_700_000_010_000,
+        _fixture(),
+        agency_id="demo",
+        feed_id="vehicles",
+        ingested_at=1_700_000_010_000,
     )
     assert not failures
     for event in events:
@@ -30,7 +33,9 @@ def test_normalized_entities_round_trip_through_avro():
         # Apache Avro represents timestamp-millis as aware datetime objects.
         for field in ("observed_at", "feed_generated_at", "ingested_at"):
             if record[field] is not None:
-                record[field] = datetime.fromtimestamp(record[field] / 1000, timezone.utc)
+                record[field] = datetime.fromtimestamp(
+                    record[field] / 1000, timezone.utc
+                )
         buffer = BytesIO()
         avro.io.DatumWriter(schema).write(record, avro.io.BinaryEncoder(buffer))
         buffer.seek(0)

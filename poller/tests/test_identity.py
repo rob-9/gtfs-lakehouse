@@ -22,8 +22,12 @@ def test_event_id_changes_with_payload_or_observation_time() -> None:
     original = event_id(**base)
     assert original == event_id(**base)
     assert original != event_id(**(base | {"observed_at": base["observed_at"] + 1_000}))
-    assert original != event_id(**(base | {"payload_digest": payload_hash({"latitude": 33.8})}))
+    assert original != event_id(
+        **(base | {"payload_digest": payload_hash({"latitude": 33.8})})
+    )
 
 
 def test_snapshot_id_is_scoped_to_feed() -> None:
-    assert snapshot_id(feed_id="a", body=b"same") != snapshot_id(feed_id="b", body=b"same")
+    assert snapshot_id(feed_id="a", body=b"same") != snapshot_id(
+        feed_id="b", body=b"same"
+    )

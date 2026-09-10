@@ -47,7 +47,12 @@ def test_receipt_clock_runs_after_response_and_body_arrive():
 
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            result = await fetch_feed(client, FeedConfig("a", "f", "https://example.test"), PollState(), clock=clock)
+            result = await fetch_feed(
+                client,
+                FeedConfig("a", "f", "https://example.test"),
+                PollState(),
+                clock=clock,
+            )
             assert result.snapshot.fetched_at == 1234
 
     asyncio.run(run())
@@ -56,11 +61,15 @@ def test_receipt_clock_runs_after_response_and_body_arrive():
 @pytest.mark.parametrize("status", [204, 206, 429, 500])
 def test_incomplete_and_failed_responses_do_not_advance_state(status):
     async def run():
-        transport = httpx.MockTransport(lambda request: httpx.Response(status, headers={"etag": "new"}))
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(status, headers={"etag": "new"})
+        )
         async with httpx.AsyncClient(transport=transport) as client:
             state = PollState(etag="old")
             with pytest.raises(httpx.HTTPStatusError):
-                await fetch_feed(client, FeedConfig("a", "f", "https://example.test"), state)
+                await fetch_feed(
+                    client, FeedConfig("a", "f", "https://example.test"), state
+                )
             assert state.etag == "old"
 
     asyncio.run(run())
@@ -68,9 +77,15 @@ def test_incomplete_and_failed_responses_do_not_advance_state(status):
 
 def test_not_modified_refreshes_validators():
     async def run():
-        transport = httpx.MockTransport(lambda request: httpx.Response(304, headers={"etag": "new"}))
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(304, headers={"etag": "new"})
+        )
         async with httpx.AsyncClient(transport=transport) as client:
-            result = await fetch_feed(client, FeedConfig("a", "f", "https://example.test"), PollState("old", "yesterday"))
+            result = await fetch_feed(
+                client,
+                FeedConfig("a", "f", "https://example.test"),
+                PollState("old", "yesterday"),
+            )
             assert result.snapshot is None
             assert result.state == PollState("new", "yesterday")
 
@@ -79,11 +94,22 @@ def test_not_modified_refreshes_validators():
 
 def test_oversized_response_is_rejected_and_url_credentials_are_redacted():
     from gtfs_lakehouse.polling import redact_url
-    assert redact_url("https://user:secret@example.test/feed?token=private") == "https://example.test/feed"
+
+    assert (
+        redact_url("https://user:secret@example.test/feed?token=private")
+        == "https://example.test/feed"
+    )
 
     async def run():
-        transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"too large"))
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b"too large")
+        )
         async with httpx.AsyncClient(transport=transport) as client:
             with pytest.raises(ValueError, match="size limit"):
-                await fetch_feed(client, FeedConfig("a", "f", "https://example.test", max_response_bytes=3), PollState())
+                await fetch_feed(
+                    client,
+                    FeedConfig("a", "f", "https://example.test", max_response_bytes=3),
+                    PollState(),
+                )
+
     asyncio.run(run())

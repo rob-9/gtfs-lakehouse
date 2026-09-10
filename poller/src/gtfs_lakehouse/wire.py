@@ -6,7 +6,9 @@ from pathlib import Path
 
 import fastavro
 
-SCHEMA = json.loads((Path(__file__).resolve().parents[3] / "schemas/gtfs_event.avsc").read_text())
+SCHEMA = json.loads(
+    (Path(__file__).resolve().parents[3] / "schemas/gtfs_event.avsc").read_text()
+)
 
 
 def encode_event(record):

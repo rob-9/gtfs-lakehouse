@@ -17,7 +17,9 @@ def static_zip() -> bytes:
     result = BytesIO()
     with ZipFile(result, "w") as archive:
         for path in sorted((ROOT / "tests/fixtures/static").glob("*.txt")):
-            archive.writestr(ZipInfo(path.name, date_time=(2020, 1, 1, 0, 0, 0)), path.read_bytes())
+            archive.writestr(
+                ZipInfo(path.name, date_time=(2020, 1, 1, 0, 0, 0)), path.read_bytes()
+            )
     return result.getvalue()
 
 
