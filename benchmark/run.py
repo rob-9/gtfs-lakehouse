@@ -43,29 +43,37 @@ def main():
         ).strip(),
         "scope": "fixture end-to-end correctness and completion time; not a throughput benchmark",
         "compose": subprocess.check_output(["docker", "compose", "config"], text=True),
-        "images": subprocess.check_output(
-            ["docker", "compose", "images", "--format", "json"], text=True
-        ),
     }
-    image_ids = subprocess.check_output(
-        ["docker", "compose", "images", "-q"], text=True
+    container_ids = subprocess.check_output(
+        ["docker", "compose", "ps", "-aq"], text=True
     ).split()
-    metadata["image_digests"] = [
-        json.loads(
-            subprocess.check_output(
-                [
-                    "docker",
-                    "image",
-                    "inspect",
-                    image,
-                    "--format",
-                    "{{json .RepoDigests}}",
-                ],
-                text=True,
-            )
-        )
-        for image in image_ids
+    containers = json.loads(
+        subprocess.check_output(["docker", "inspect", *container_ids], text=True)
+    )
+    metadata["containers"] = [
+        {
+            "name": item["Name"],
+            "image_id": item["Image"],
+            "image_reference": item["Config"]["Image"],
+        }
+        for item in containers
     ]
+    metadata["image_digests"] = []
+    for image in sorted({item["Image"] for item in containers}):
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", image, "--format", "{{json .RepoDigests}}"],
+            text=True,
+            capture_output=True,
+        )
+        metadata["image_digests"].append(
+            {
+                "image_id": image,
+                "repo_digests": json.loads(inspected.stdout)
+                if inspected.returncode == 0
+                else None,
+                "metadata_available": inspected.returncode == 0,
+            }
+        )
     for tool in ("java", "mvn"):
         version = subprocess.run(
             [tool, "-version"], text=True, capture_output=True, check=True
