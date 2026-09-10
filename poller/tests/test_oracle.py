@@ -23,5 +23,9 @@ def test_fixture_predictions_and_cancellation_are_not_observed_arrivals():
     assert aggregate(list(reversed(enriched))) == [metric]
 
     vehicle = deepcopy(enriched[3])
-    vehicle.update(trip_id="T3", event_id="vehicle-correction", observed_at=vehicle["observed_at"] + 1000)
+    vehicle.update(
+        trip_id="T3",
+        event_id="vehicle-correction",
+        observed_at=vehicle["observed_at"] + 1000,
+    )
     assert aggregate(enriched + [vehicle])[0]["canceled_trip_count"] == 1

@@ -78,24 +78,49 @@ def recover_taskmanager(output):
         from .models import RawSnapshot
         from .lake import catalog
         from .serving import latest
+
         agency = result["agency"]
         feed = agency + "-late-after-restore"
         body = realtime(result["metric"]["window_start"] // 1000)
-        snapshot = RawSnapshot(snapshot_id(feed_id=feed, body=body), agency, feed,
-            time.time_ns() // 1_000_000, "fixture://late-after-restore", 200, None, None, None, body)
+        snapshot = RawSnapshot(
+            snapshot_id(feed_id=feed, body=body),
+            agency,
+            feed,
+            time.time_ns() // 1_000_000,
+            "fixture://late-after-restore",
+            200,
+            None,
+            None,
+            None,
+            body,
+        )
         Publisher(feed).publish(snapshot)
         while time.monotonic() < deadline:
-            audits = catalog().load_table("gtfs.rejected_events").scan().to_arrow().to_pylist()
+            audits = (
+                catalog()
+                .load_table("gtfs.rejected_events")
+                .scan()
+                .to_arrow()
+                .to_pylist()
+            )
             rejected = set()
             for row in audits:
                 audit = json.loads(row["record_json"])
-                if audit.get("reason") == "beyond_retention" and audit.get("event", {}).get("feed_id") == feed:
+                if (
+                    audit.get("reason") == "beyond_retention"
+                    and audit.get("event", {}).get("feed_id") == feed
+                ):
                     rejected.add(audit["event"]["event_id"])
             if len(rejected) == 4:
                 break
             time.sleep(2)
         assert len(rejected) == 4, "unseen late events were not audited after restore"
-        visible = [row for row in latest() if row["agency_id"] == agency and row["window_start"] == result["metric"]["window_start"]]
+        visible = [
+            row
+            for row in latest()
+            if row["agency_id"] == agency
+            and row["window_start"] == result["metric"]["window_start"]
+        ]
         assert visible == [result["metric"]], "restart changed a finalized window"
         result["late_after_restore_rejected"] = len(rejected)
         result.update(
