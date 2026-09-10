@@ -1,0 +1,12 @@
+gtfs_lakehouse:
+  target: local
+  outputs:
+    local:
+      type: clickhouse
+      schema: gtfs
+      host: localhost
+      port: 8123
+      user: "{{ env_var('CLICKHOUSE_USER', 'lakehouse') }}"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD', 'local-lakehouse-secret') }}"
+      secure: false
+      threads: 1

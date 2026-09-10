@@ -13,3 +13,4 @@ build/
 benchmark/artifacts/
 var/
 .m2/
+dbt/logs/
