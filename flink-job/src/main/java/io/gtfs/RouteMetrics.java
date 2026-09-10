@@ -12,9 +12,13 @@ import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
 /** Final five-minute windows, retaining only the latest prediction per trip/stop. */
-public class RouteMetrics extends KeyedProcessFunction<String,String,String> {
+public class RouteMetrics extends KeyedProcessFunction<String,String,String>
+    implements org.apache.flink.streaming.api.checkpoint.CheckpointedFunction {
   static final long WINDOW = 300000;
+  static final org.apache.flink.util.OutputTag<String> INPUTS = new org.apache.flink.util.OutputTag<String>("metric-inputs") {};
   private transient ListState<String> events;
+  private transient ListState<Long> cutoffState;
+  private long cutoff = Long.MIN_VALUE;
   @Override public void open(Configuration config) {
     events = getRuntimeContext().getListState(new ListStateDescriptor<>("route-input", String.class));
   }
@@ -29,16 +33,28 @@ public class RouteMetrics extends KeyedProcessFunction<String,String,String> {
   record StopVisit(String stop, String trip) {}
   @Override public void processElement(String value, Context ctx, Collector<String> out) throws Exception {
     long start = Math.floorDiv(LakehouseJob.parse(value).path("observed_at").asLong(), WINDOW) * WINDOW;
-    if (start + WINDOW + 120000 <= ctx.timerService().currentWatermark()) {
+    cutoff = Math.max(cutoff, ctx.timerService().currentWatermark());
+    if (start + WINDOW + 120000 <= cutoff) {
       ctx.output(LakehouseJob.LATE, value); return;
     }
     events.add(value);
+    ObjectNode admission = (ObjectNode) LakehouseJob.parse(value);
+    admission.put("generation", "live-v2");
+    ctx.output(INPUTS, admission.toString());
     ctx.timerService().registerEventTimeTimer(start + WINDOW + 120000);
   }
   @Override public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+    cutoff = Math.max(cutoff, ctx.timerService().currentWatermark());
     var values = new ArrayList<String>(); events.get().forEach(values::add);
     if (!values.isEmpty()) out.collect(aggregate(values).toString());
     events.clear();
+  }
+  @Override public void initializeState(org.apache.flink.runtime.state.FunctionInitializationContext ctx) throws Exception {
+    cutoffState = ctx.getOperatorStateStore().getUnionListState(new ListStateDescriptor<>("window-watermark", Long.class));
+    for (long saved : cutoffState.get()) cutoff = Math.max(cutoff, saved);
+  }
+  @Override public void snapshotState(org.apache.flink.runtime.state.FunctionSnapshotContext ctx) throws Exception {
+    cutoffState.clear(); cutoffState.add(cutoff);
   }
   static ObjectNode aggregate(List<String> values) throws Exception {
     values = new ArrayList<>(values);
@@ -73,7 +89,7 @@ public class RouteMetrics extends KeyedProcessFunction<String,String,String> {
     var headways = new ArrayList<Double>();
     byStop.values().forEach(times -> { Collections.sort(times); for(int i=1;i<times.size();i++) headways.add((times.get(i)-times.get(i-1))/1000.0); });
     ObjectNode result = LakehouseJob.JSON.createObjectNode();
-    result.put("schema_version", 1); result.put("generation", "live-v1");
+    result.put("schema_version", 1); result.put("generation", "live-v2");
     result.put("agency_id", first.path("agency_id").asText()); result.put("route_id", first.path("route_id").asText());
     result.put("direction_id", first.path("direction_id").asInt(-1)); result.put("service_date", first.path("service_date").asText());
     long start = Math.floorDiv(first.path("observed_at").asLong(), WINDOW) * WINDOW;

@@ -67,16 +67,20 @@ public class LakehouseJob {
     }
   }
 
-  public static class Deduplicate extends KeyedProcessFunction<String, String, String> {
+  public static class Deduplicate extends KeyedProcessFunction<String, String, String>
+      implements org.apache.flink.streaming.api.checkpoint.CheckpointedFunction {
     private final long retentionMillis;
     private transient ValueState<Boolean> seen;
+    private transient org.apache.flink.api.common.state.ListState<Long> cutoffState;
+    private long cutoff = Long.MIN_VALUE;
     public Deduplicate(long retentionMillis) { this.retentionMillis = retentionMillis; }
     @Override public void open(Configuration config) {
       seen = getRuntimeContext().getState(new ValueStateDescriptor<>("seen-event", Boolean.class));
     }
     @Override public void processElement(String value, Context ctx, Collector<String> out) throws Exception {
       long timestamp = parse(value).path("observed_at").asLong();
-      long watermark = ctx.timerService().currentWatermark();
+      long watermark = Math.max(cutoff, ctx.timerService().currentWatermark());
+      cutoff = watermark;
       if (beyondRetention(timestamp, watermark, retentionMillis)) {
         ObjectNode audit = JSON.createObjectNode();
         audit.put("reason", "beyond_retention"); audit.set("event", parse(value));
@@ -88,7 +92,16 @@ public class LakehouseJob {
       }
     }
     @Override public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+      cutoff = Math.max(cutoff, ctx.timerService().currentWatermark());
       seen.clear();
+    }
+    @Override public void initializeState(org.apache.flink.runtime.state.FunctionInitializationContext ctx) throws Exception {
+      cutoffState = ctx.getOperatorStateStore().getUnionListState(
+          new org.apache.flink.api.common.state.ListStateDescriptor<>("admission-watermark", Long.class));
+      for (long saved : cutoffState.get()) cutoff = Math.max(cutoff, saved);
+    }
+    @Override public void snapshotState(org.apache.flink.runtime.state.FunctionSnapshotContext ctx) throws Exception {
+      cutoffState.clear(); cutoffState.add(cutoff);
     }
   }
 
@@ -103,10 +116,11 @@ public class LakehouseJob {
     if (!catalog.tableExists(identifier)) catalog.createTable(identifier, HISTORY);
     var rows = stream.map(value -> {
       JsonNode record = parse(value);
-      String id = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-          .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-      long timestamp = record.path("fetched_at").asLong(record.path("ingested_at").asLong(
-          record.path("event").path("observed_at").asLong()));
+      String id = record.hasNonNull("event_id") ? record.path("event_id").asText()
+          : java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+              .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+      long timestamp = record.path("observed_at").asLong(record.path("fetched_at").asLong(
+          record.path("ingested_at").asLong(record.path("event").path("observed_at").asLong())));
       return (RowData) GenericRowData.of(StringData.fromString(id), timestamp, StringData.fromString(value));
     }).returns(RowData.class).uid(name + "-row-v1");
     FlinkSink.forRowData(rows).tableLoader(TableLoader.fromCatalog(loader, identifier))
@@ -181,6 +195,7 @@ public class LakehouseJob {
     FlinkSink.forRowData(enrichedRows).tableLoader(TableLoader.fromCatalog(catalogLoader, enrichedId)).uidPrefix("enriched-iceberg-v1").writeParallelism(1).append();
     var metrics = enriched.filter(value -> parse(value).path("unmatched_reason").isNull()).uid("matched-only-v1")
         .keyBy(RouteMetrics::key).process(new RouteMetrics()).uid("route-windows-v1");
+    archive(metrics.getSideOutput(RouteMetrics.INPUTS), "metric_inputs", catalogLoader, catalog);
     metrics.sinkTo(KafkaSink.<String>builder().setBootstrapServers(brokers)
         .setKafkaProducerConfig(producerConfig())
         .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE).setTransactionalIdPrefix("gtfs-metrics-v1-")

@@ -55,7 +55,7 @@ def insert(records):
         query("INSERT INTO gtfs.route_metrics FORMAT JSONEachRow\n" + "\n".join(rows))
 
 
-def latest(generation="live-v1"):
+def latest(generation="live-v2"):
     result = query(
         "SELECT record_json FROM gtfs.route_metrics_latest WHERE generation = {generation:String} ORDER BY agency_id, route_id, direction_id, service_date, window_start FORMAT JSONEachRow",
         generation=generation,

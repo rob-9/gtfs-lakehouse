@@ -62,6 +62,42 @@ def recover_taskmanager(output):
         after = httpx.get(url, timeout=10).json()
         (destination / "after.json").write_text(json.dumps(after, indent=2))
         assert after["counts"]["restored"] > before["counts"]["restored"]
+        # A second restart must not reopen the now-final window for unseen old IDs.
+        subprocess.run(["docker", "compose", "restart", "taskmanager"], check=True)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            recovered = httpx.get(url, timeout=10).json()
+            if recovered["counts"]["restored"] > after["counts"]["restored"]:
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError("second TaskManager recovery timed out")
+        from .fixtures import realtime
+        from .identity import snapshot_id
+        from .ingestion import Publisher
+        from .models import RawSnapshot
+        from .lake import catalog
+        from .serving import latest
+        agency = result["agency"]
+        feed = agency + "-late-after-restore"
+        body = realtime(result["metric"]["window_start"] // 1000)
+        snapshot = RawSnapshot(snapshot_id(feed_id=feed, body=body), agency, feed,
+            time.time_ns() // 1_000_000, "fixture://late-after-restore", 200, None, None, None, body)
+        Publisher(feed).publish(snapshot)
+        while time.monotonic() < deadline:
+            audits = catalog().load_table("gtfs.rejected_events").scan().to_arrow().to_pylist()
+            rejected = set()
+            for row in audits:
+                audit = json.loads(row["record_json"])
+                if audit.get("reason") == "beyond_retention" and audit.get("event", {}).get("feed_id") == feed:
+                    rejected.add(audit["event"]["event_id"])
+            if len(rejected) == 4:
+                break
+            time.sleep(2)
+        assert len(rejected) == 4, "unseen late events were not audited after restore"
+        visible = [row for row in latest() if row["agency_id"] == agency and row["window_start"] == result["metric"]["window_start"]]
+        assert visible == [result["metric"]], "restart changed a finalized window"
+        result["late_after_restore_rejected"] = len(rejected)
         result.update(
             parity=True, elapsed_seconds=time.monotonic() - started, job_id=job_id
         )

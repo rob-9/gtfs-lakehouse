@@ -7,7 +7,7 @@ from collections import defaultdict
 WINDOW = 300000
 
 
-def aggregate(events, generation="live-v1"):
+def aggregate(events, generation="live-v2"):
     groups = defaultdict(dict)
     for event in events:
         if event.get("unmatched_reason") is not None:

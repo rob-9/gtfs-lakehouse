@@ -17,12 +17,14 @@ def pin(path):
         "enriched_events",
         "route_window_metrics",
         "schedule_versions",
+        "metric_inputs",
     ):
         snapshot = client.load_table(f"gtfs.{name}").current_snapshot()
         if snapshot is None:
             raise ValueError(f"{name} has no committed snapshot")
         snapshots[name] = snapshot.snapshot_id
     manifest = {
+        "source_generation": "live-v2",
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "snapshots": snapshots,
@@ -44,22 +46,30 @@ def records(manifest, name):
 
 
 def rebuild(manifest, generation):
-    if generation == "live-v1" or not generation:
+    if generation in ("live-v1", "live-v2") or not generation:
         raise ValueError("rebuild requires a separate nonempty generation")
     # Only compare closed windows present in the pinned aggregate snapshot.
-    live = records(manifest, "route_window_metrics")
+    source_generation = manifest.get("source_generation", "live-v1")
+    live = [row for row in records(manifest, "route_window_metrics") if row["generation"] == source_generation]
     keys = {metric_key(row) for row in live}
     enriched = [
         row
-        for row in records(manifest, "enriched_events")
+        for row in records(manifest, "metric_inputs" if "metric_inputs" in manifest["snapshots"] else "enriched_events")
         if row.get("unmatched_reason") is None and metric_key(row) in keys
+        and row.get("generation", source_generation) == source_generation
     ]
-    expected = aggregate(enriched)
+    expected = aggregate(enriched, generation=source_generation)
     unique = {metric_key(row): row for row in live}
-    if {metric_key(row): row for row in expected} != unique:
-        raise ValueError(
-            "stream/batch parity failed; serving generation was not written"
-        )
+    expected_by_key = {metric_key(row): row for row in expected}
+    if expected_by_key != unique:
+        differences = []
+        for key in sorted(expected_by_key.keys() | unique.keys()):
+            batch, stream = expected_by_key.get(key, {}), unique.get(key, {})
+            fields = {field: {"batch": batch.get(field), "stream": stream.get(field)}
+                      for field in batch.keys() | stream.keys() if batch.get(field) != stream.get(field)}
+            if fields:
+                differences.append({"key": key, "fields": fields})
+        raise ValueError("stream/batch parity failed; generation not written: " + json.dumps(differences[:10], sort_keys=True))
     bootstrap()
     if latest(generation):
         raise ValueError("generation already exists; choose a fresh generation")
