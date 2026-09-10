@@ -50,26 +50,49 @@ def rebuild(manifest, generation):
         raise ValueError("rebuild requires a separate nonempty generation")
     # Only compare closed windows present in the pinned aggregate snapshot.
     source_generation = manifest.get("source_generation", "live-v1")
-    live = [row for row in records(manifest, "route_window_metrics") if row["generation"] == source_generation]
+    live = [
+        row
+        for row in records(manifest, "route_window_metrics")
+        if row["generation"] == source_generation
+    ]
     keys = {metric_key(row) for row in live}
     enriched = [
         row
-        for row in records(manifest, "metric_inputs" if "metric_inputs" in manifest["snapshots"] else "enriched_events")
-        if row.get("unmatched_reason") is None and metric_key(row) in keys
+        for row in records(
+            manifest,
+            "metric_inputs"
+            if "metric_inputs" in manifest["snapshots"]
+            else "enriched_events",
+        )
+        if row.get("unmatched_reason") is None
+        and metric_key(row) in keys
         and row.get("generation", source_generation) == source_generation
     ]
     expected = aggregate(enriched, generation=source_generation)
-    unique = {metric_key(row): row for row in live}
+    unique = {}
+    for row in live:
+        key = metric_key(row)
+        if key in unique and unique[key] != row:
+            raise ValueError(
+                "conflicting final aggregates for one window; generation was not written"
+            )
+        unique[key] = row
     expected_by_key = {metric_key(row): row for row in expected}
     if expected_by_key != unique:
         differences = []
         for key in sorted(expected_by_key.keys() | unique.keys()):
             batch, stream = expected_by_key.get(key, {}), unique.get(key, {})
-            fields = {field: {"batch": batch.get(field), "stream": stream.get(field)}
-                      for field in batch.keys() | stream.keys() if batch.get(field) != stream.get(field)}
+            fields = {
+                field: {"batch": batch.get(field), "stream": stream.get(field)}
+                for field in batch.keys() | stream.keys()
+                if batch.get(field) != stream.get(field)
+            }
             if fields:
                 differences.append({"key": key, "fields": fields})
-        raise ValueError("stream/batch parity failed; generation not written: " + json.dumps(differences[:10], sort_keys=True))
+        raise ValueError(
+            "stream/batch parity failed; generation not written: "
+            + json.dumps(differences[:10], sort_keys=True)
+        )
     bootstrap()
     if latest(generation):
         raise ValueError("generation already exists; choose a fresh generation")
@@ -97,3 +120,78 @@ def metric_key(row):
         row["service_date"],
         timestamp // 300000 * 300000,
     )
+
+
+def verified_migration_inputs(metrics, inputs, enriched, generation):
+    """Recover only fully missing legacy inputs whose entire aggregate and digest match."""
+    existing = {
+        metric_key(row) for row in inputs if row.get("generation") == generation
+    }
+    recovered = []
+    processed = {}
+    for metric in metrics:
+        if metric["generation"] != generation or metric_key(metric) in existing:
+            continue
+        key = metric_key(metric)
+        if key in processed:
+            if processed[key] != metric:
+                raise ValueError("conflicting legacy aggregates cannot be migrated")
+            continue
+        processed[key] = metric
+        candidates = {
+            row["event_id"]: row
+            for row in enriched
+            if row.get("unmatched_reason") is None
+            and metric_key(row) == metric_key(metric)
+        }
+        if aggregate(list(candidates.values()), generation=generation) != [metric]:
+            raise ValueError(
+                "legacy inputs cannot be verified against the complete aggregate and input digest"
+            )
+        recovered.extend(
+            row
+            | {
+                "generation": generation,
+                "admission_origin": "verified_legacy_migration",
+            }
+            for row in candidates.values()
+        )
+    return recovered
+
+
+def migrate_inputs(manifest, apply=False):
+    generation = manifest.get("source_generation", "live-v2")
+    recovered = verified_migration_inputs(
+        records(manifest, "route_window_metrics"),
+        records(manifest, "metric_inputs"),
+        records(manifest, "enriched_events"),
+        generation,
+    )
+    if recovered and apply:
+        import pyarrow as pa
+        from .identity import canonical_json
+
+        target = catalog().load_table("gtfs.metric_inputs")
+        if (
+            target.current_snapshot().snapshot_id
+            != manifest["snapshots"]["metric_inputs"]
+        ):
+            raise ValueError(
+                "admission ledger changed since pinning; create a fresh manifest"
+            )
+        rows = [
+            {
+                "event_id": row["event_id"],
+                "observed_at": row["observed_at"],
+                "record_json": canonical_json(
+                    row | {"migration_snapshots": manifest["snapshots"]}
+                ).decode(),
+            }
+            for row in recovered
+        ]
+        target.append(pa.Table.from_pylist(rows, schema=target.schema().as_arrow()))
+    return {
+        "applied": apply,
+        "verified_records": len(recovered),
+        "generation": generation,
+    }
