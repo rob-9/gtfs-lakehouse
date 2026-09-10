@@ -14,3 +14,4 @@ benchmark/artifacts/
 var/
 .m2/
 dbt/logs/
+dbt/.user.yml
