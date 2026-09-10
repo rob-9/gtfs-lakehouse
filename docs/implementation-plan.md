@@ -79,7 +79,9 @@ ClickHouse consumes versioned route-window rows into a staging table and exposes
 
 ### Current baseline
 
-Implemented: conditional HTTP fetching, VehiclePosition and TripUpdate normalization, correction-sensitive event IDs, structured validation failures, Avro schemas, and 27 unit/serialization tests. The fetch function returns records; there is no running service, publisher, persistent store, or streaming job yet.
+Implemented locally: managed fixture/poller/serving containers, durable HTTP outboxes, transactional Kafka publication, versioned Iceberg schedules, Java Flink enrichment and checkpointed history, final prediction/adherence windows, ClickHouse serving, pinned replay with an independent oracle, dbt checks, a provisioned operational dashboard, checkpoint-failure tests, and a repeated small-fixture measurement harness. See `docs/development.md` for commands and current limits.
+
+The core path is runnable, but the full roadmap remains open. Outstanding acceptance work includes schedule-driven missing-service metrics, cross-window observed headway/deviation/bunching, broader timestamp/trip-instance inference, bounded large-schedule state, expanded operational instrumentation, the complete failure matrix, guarded table maintenance, and sustained-load/large-replay scenarios. The fixture measurement harness is not evidence for the target throughput claims.
 
 Work through the phases below in order. Each phase produces a runnable result before the next starts. Start with one synthetic agency and a fixture HTTP server, then expand to configured public feeds. External deployment and remote repository changes are outside this plan.
 
