@@ -37,7 +37,7 @@ def aggregate(events, generation="live-v1"):
             if (payload.get("trip") or {}).get("schedule_relationship") == "CANCELED":
                 canceled.add(trip)
                 latest = {key: value for key, value in latest.items() if key[0] != trip}
-            else:
+            elif payload.get("trip_update") is not None:
                 canceled.discard(trip)
                 for stop in (payload.get("trip_update") or {}).get(
                     "stop_time_updates", []

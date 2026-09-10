@@ -20,10 +20,13 @@ public class RouteMetrics extends KeyedProcessFunction<String,String,String> {
   }
   static String key(String value) {
     JsonNode e = LakehouseJob.parse(value);
-    return e.path("agency_id").asText() + "/" + e.path("route_id").asText() + "/"
-        + e.path("direction_id").asInt(-1) + "/" + e.path("service_date").asText() + "/"
-        + Math.floorDiv(e.has("observed_at") ? e.path("observed_at").asLong() : e.path("window_start").asLong(), WINDOW);
+    return LakehouseJob.JSON.createArrayNode().add(e.path("agency_id").asText())
+        .add(e.path("route_id").asText()).add(e.path("direction_id").asInt(-1))
+        .add(e.path("service_date").asText())
+        .add(Math.floorDiv(e.has("observed_at") ? e.path("observed_at").asLong() : e.path("window_start").asLong(), WINDOW)).toString();
   }
+  record Prediction(String trip, String stop, String sequence) {}
+  record StopVisit(String stop, String trip) {}
   @Override public void processElement(String value, Context ctx, Collector<String> out) throws Exception {
     long start = Math.floorDiv(LakehouseJob.parse(value).path("observed_at").asLong(), WINDOW) * WINDOW;
     if (start + WINDOW + 120000 <= ctx.timerService().currentWatermark()) {
@@ -42,31 +45,31 @@ public class RouteMetrics extends KeyedProcessFunction<String,String,String> {
     values.sort(Comparator.<String>comparingLong(v -> LakehouseJob.parse(v).path("observed_at").asLong())
         .thenComparing(v -> LakehouseJob.parse(v).path("event_id").asText()));
     JsonNode first = LakehouseJob.parse(values.get(0));
-    Map<String, Integer> latest = new HashMap<>();
+    Map<Prediction, Integer> latest = new HashMap<>();
     Set<String> vehicles = new HashSet<>(), ids = new TreeSet<>(), canceled = new HashSet<>();
-    Map<String, Long> arrivals = new HashMap<>();
+    Map<StopVisit, Long> arrivals = new HashMap<>();
     for (String value : values) {
       JsonNode event = LakehouseJob.parse(value);
       ids.add(event.path("event_id").asText());
       if (!event.path("vehicle_id").isNull()) vehicles.add(event.path("vehicle_id").asText());
       String trip = event.path("trip_id").asText();
       String relationship = event.path("payload").path("trip").path("schedule_relationship").asText();
-      if (relationship.equals("CANCELED")) { canceled.add(trip); latest.keySet().removeIf(k -> k.startsWith(trip + "/")); }
-      else {
+      if (relationship.equals("CANCELED")) { canceled.add(trip); latest.keySet().removeIf(k -> k.trip().equals(trip)); }
+      else if (event.path("payload").path("trip_update").isObject()) {
         canceled.remove(trip);
         for (JsonNode stop : event.path("payload").path("trip_update").path("stop_time_updates")) {
-          String sample = trip + "/" + stop.path("stop_id").asText() + "/" + stop.path("stop_sequence").asText();
+          Prediction sample = new Prediction(trip, stop.path("stop_id").asText(null), stop.path("stop_sequence").asText(null));
           if (stop.path("arrival_delay").isNumber()) latest.put(sample, stop.path("arrival_delay").asInt());
           else latest.remove(sample);
         }
       }
       JsonNode position = event.path("payload").path("vehicle_position");
       if (position.path("current_status").asText().equals("STOPPED_AT") && !position.path("stop_id").isNull())
-        arrivals.merge(position.path("stop_id").asText() + "/" + trip, event.path("observed_at").asLong(), Math::min);
+        arrivals.merge(new StopVisit(position.path("stop_id").asText(), trip), event.path("observed_at").asLong(), Math::min);
     }
     var delays = new ArrayList<>(latest.values()); Collections.sort(delays);
     var byStop = new HashMap<String,List<Long>>();
-    arrivals.forEach((k,v) -> byStop.computeIfAbsent(k.substring(0,k.indexOf('/')), x -> new ArrayList<>()).add(v));
+    arrivals.forEach((k,v) -> byStop.computeIfAbsent(k.stop(), x -> new ArrayList<>()).add(v));
     var headways = new ArrayList<Double>();
     byStop.values().forEach(times -> { Collections.sort(times); for(int i=1;i<times.size();i++) headways.add((times.get(i)-times.get(i-1))/1000.0); });
     ObjectNode result = LakehouseJob.JSON.createObjectNode();

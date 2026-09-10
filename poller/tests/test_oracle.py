@@ -2,6 +2,7 @@ from gtfs_lakehouse.fixtures import realtime, static_zip
 from gtfs_lakehouse.normalize import normalize_feed
 from gtfs_lakehouse.schedules import parse_archive, enrich
 from gtfs_lakehouse.oracle import aggregate
+from copy import deepcopy
 
 
 def test_fixture_predictions_and_cancellation_are_not_observed_arrivals():
@@ -20,3 +21,7 @@ def test_fixture_predictions_and_cancellation_are_not_observed_arrivals():
     assert metric["mean_headway_seconds"] is None
     assert aggregate(enriched + enriched) == [metric]
     assert aggregate(list(reversed(enriched))) == [metric]
+
+    vehicle = deepcopy(enriched[3])
+    vehicle.update(trip_id="T3", event_id="vehicle-correction", observed_at=vehicle["observed_at"] + 1000)
+    assert aggregate(enriched + [vehicle])[0]["canceled_trip_count"] == 1

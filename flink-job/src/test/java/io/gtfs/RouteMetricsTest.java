@@ -27,4 +27,18 @@ class RouteMetricsTest {
     assertTrue(metric.path("mean_headway_seconds").isNull());
     assertEquals(0, metric.path("arrival_count").asInt());
   }
+  @Test void slashCharactersCannotCollideInAggregateKeys() {
+    String value = event("a", 1789052400000L, 60);
+    String left = value.replace("demo", "a/b").replace("R1", "c");
+    String right = value.replace("demo", "a").replace("R1", "b/c");
+    assertNotEquals(RouteMetrics.key(left), RouteMetrics.key(right));
+  }
+  @Test void vehicleObservationDoesNotClearExplicitCancellation() throws Exception {
+    String canceled = event("a", 1789052400000L, 60).replace("SCHEDULED", "CANCELED");
+    var vehicle = LakehouseJob.parse(event("b", 1789052401000L, 60));
+    ((com.fasterxml.jackson.databind.node.ObjectNode) vehicle.path("payload")).putNull("trip_update");
+    var metric = RouteMetrics.aggregate(List.of(canceled, vehicle.toString()));
+    assertEquals(1, metric.path("canceled_trip_count").asInt());
+    assertEquals(0, metric.path("prediction_count").asInt());
+  }
 }
