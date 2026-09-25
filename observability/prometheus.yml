@@ -4,3 +4,6 @@ scrape_configs:
   - job_name: gtfs
     static_configs:
       - targets: [exporter:9108]
+  - job_name: gtfs-poller
+    static_configs:
+      - targets: [poller:9109]

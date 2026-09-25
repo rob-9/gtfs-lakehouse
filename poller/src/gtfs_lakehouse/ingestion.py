@@ -5,6 +5,7 @@ import json
 import os
 import random
 import sqlite3
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -145,10 +146,13 @@ class Publisher:
             "snapshot_id": snapshot.snapshot_id,
             "events": len(events),
             "failures": len(failures),
+            "newest_observed_at": max(
+                (event.observed_at for event in events), default=None
+            ),
         }
 
 
-async def poll_source(entry, state_dir, stop, once=False):
+async def poll_source(entry, state_dir, stop, once=False, metrics=None):
     source_id = sha256_hex(
         canonical_json([entry["agency_id"], entry["feed_id"], entry["url"]])
     )
@@ -175,26 +179,56 @@ async def poll_source(entry, state_dir, stop, once=False):
         headers["Authorization"] = os.environ[entry["authorization_env"]]
     failures = 0
     try:
+        source = (entry["agency_id"], entry["feed_id"])
+        if metrics is not None:
+            metrics.initialize(source)
+            metrics.outbox(source, box.pending())
         async with httpx.AsyncClient(headers=headers) as client:
             while not stop.is_set():
                 delay = interval
+                stage = "initialize"
                 try:
                     if publisher is None:
                         publisher = await asyncio.to_thread(Publisher, source_id)
                     pending = box.pending()
                     if pending is None:
+                        stage = "fetch"
+                        if metrics is not None:
+                            metrics.attempts.labels(*source).inc()
                         result = await fetch_feed(client, config, box.state())
+                        if metrics is not None:
+                            metrics.responses.labels(
+                                *source, "200" if result.snapshot is not None else "304"
+                            ).inc()
+                            metrics.last_success.labels(*source).set(time.time())
                         pending = result.snapshot
                         if pending is not None:
+                            stage = "stage"
                             box.stage(pending)
+                            if metrics is not None:
+                                metrics.outbox(source, pending)
                         else:
+                            stage = "acknowledge"
                             box.acknowledge(result.state)
                     if pending is not None:
+                        stage = "publish"
                         report = await asyncio.to_thread(publisher.publish, pending)
+                        stage = "acknowledge"
                         box.acknowledge(PollState(pending.etag, pending.last_modified))
+                        if metrics is not None:
+                            metrics.outbox(source, None)
+                            metrics.published.labels(*source).inc()
+                            observed_at = report["newest_observed_at"]
+                            metrics.observed_at.labels(*source).set(
+                                observed_at / 1000
+                                if observed_at is not None
+                                else float("nan")
+                            )
                         print(json.dumps(report), flush=True)
                     failures = 0
                 except Exception as exc:
+                    if metrics is not None:
+                        metrics.errors.labels(*source, stage).inc()
                     if once:
                         raise
                     failures += 1

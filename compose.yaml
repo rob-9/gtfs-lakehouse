@@ -22,7 +22,7 @@ services:
     build: .
     image: gtfs-lakehouse-python:local
     profiles: [workers]
-    command: [poll, --config, config/container-feeds.toml, --state-dir, /app/var/poller]
+    command: [poll, --config, config/container-feeds.toml, --state-dir, /app/var/poller, --metrics-host, "0.0.0.0", --metrics-port, "9109"]
     environment: *client-environment
     volumes: [poller-data:/app/var/poller]
     mem_limit: 256m

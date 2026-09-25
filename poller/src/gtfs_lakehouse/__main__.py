@@ -53,6 +53,10 @@ def main():
     poll.add_argument("--config", default="config/feeds.toml")
     poll.add_argument("--state-dir", default="var/poller")
     poll.add_argument("--once", action="store_true")
+    poll.add_argument(
+        "--metrics-port", type=int, help="Expose Prometheus polling metrics"
+    )
+    poll.add_argument("--metrics-host", default="127.0.0.1")
     args = parser.parse_args()
     if args.command == "fixtures":
         from .fixtures import serve
@@ -170,6 +174,13 @@ def main():
         Path(args.state_dir).mkdir(parents=True, exist_ok=True)
         with open(Path(args.state_dir) / "owner.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            metrics = None
+            if args.metrics_port is not None:
+                from prometheus_client import start_http_server
+                from .poller_metrics import PollerMetrics
+
+                metrics = PollerMetrics()
+                start_http_server(args.metrics_port, addr=args.metrics_host)
 
             async def run():
                 stop = asyncio.Event()
@@ -177,7 +188,7 @@ def main():
                     asyncio.get_running_loop().add_signal_handler(sig, stop.set)
                 await asyncio.gather(
                     *(
-                        poll_source(entry, args.state_dir, stop, args.once)
+                        poll_source(entry, args.state_dir, stop, args.once, metrics)
                         for entry in entries
                     )
                 )
