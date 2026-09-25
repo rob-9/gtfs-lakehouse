@@ -22,6 +22,7 @@ def main():
     commands.add_parser("bootstrap")
     commands.add_parser("smoke-platform")
     commands.add_parser("smoke")
+    commands.add_parser("smoke-headways")
     commands.add_parser("monitor")
     commands.add_parser("submit")
     commands.add_parser("redeploy")
@@ -191,6 +192,10 @@ def main():
         from .smoke import platform
 
         platform()
+    elif args.command == "smoke-headways":
+        from .smoke import headways
+
+        headways()
     elif args.command == "smoke":
         from .smoke import pipeline
 

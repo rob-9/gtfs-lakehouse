@@ -33,6 +33,6 @@ jobs:
           distribution: temurin
           java-version: '17'
       - run: pip install uv==0.8.17
-      - run: make demo quality test-recovery
+      - run: make demo smoke-headways quality test-recovery
       - if: always()
         run: make down

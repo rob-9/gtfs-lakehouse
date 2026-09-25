@@ -182,3 +182,91 @@ def pipeline(fault=None):
     raise AssertionError(
         "final aggregate did not become queryable before smoke timeout"
     )
+
+
+def headways():
+    """Exercise a real cross-window predecessor through Kafka, Flink, and serving."""
+    import json
+    from google.transit import gtfs_realtime_pb2 as pb
+    from .fixtures import static_zip
+    from .lake import catalog, load_schedule, publish_schedule
+    from .serving import latest, serve
+
+    token = "headways-" + uuid.uuid4().hex[:12]
+    client = catalog()
+    existing = client.load_table("gtfs.normalized_events").scan().to_arrow().to_pylist()
+    base = max([int(time.time())] + [row["observed_at"] // 1000 for row in existing])
+    base = (base // 300 + 1) * 300
+    publish_schedule(load_schedule(static_zip(), token, "2020-01-01T00:00:00+00:00"))
+    publisher = Publisher(token)
+
+    def publish(identity, trip, timestamp):
+        feed = pb.FeedMessage()
+        feed.header.gtfs_realtime_version = "2.0"
+        feed.header.timestamp = timestamp
+        vehicle = feed.entity.add(id=identity).vehicle
+        vehicle.timestamp = timestamp
+        vehicle.trip.trip_id = trip
+        vehicle.trip.start_date = "20260910"
+        vehicle.vehicle.id = trip
+        vehicle.position.latitude = 33.68
+        vehicle.position.longitude = -117.82
+        vehicle.stop_id = "S1"
+        vehicle.current_status = pb.VehiclePosition.STOPPED_AT
+        body = feed.SerializeToString(deterministic=True)
+        publisher.publish(
+            RawSnapshot(
+                snapshot_id(feed_id=token, body=body),
+                token,
+                token,
+                time.time_ns() // 1_000_000,
+                "fixture://headways",
+                200,
+                None,
+                None,
+                None,
+                body,
+            )
+        )
+
+    # Reverse delivery, duplicate delivery, and a repeated dwell across the boundary.
+    publish("later", "T2", base + 310)
+    publish("earlier", "T1", base + 290)
+    publish("earlier", "T1", base + 290)
+    publish("dwell", "T1", base + 305)
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        enriched = [
+            json.loads(row["record_json"])
+            for row in client.load_table("gtfs.enriched_events")
+            .scan()
+            .to_arrow()
+            .to_pylist()
+        ]
+        enriched = [row for row in enriched if row["agency_id"] == token]
+        if len(enriched) == 3:
+            assert all(row.get("unmatched_reason") is None for row in enriched)
+            break
+        time.sleep(2)
+    else:
+        raise AssertionError("headway inputs did not become durable before timeout")
+    publish("advance", "T3", base + 900)
+    while time.monotonic() < deadline:
+        serve(once=True)
+        rows = [
+            row
+            for row in latest("live-v3")
+            if row["agency_id"] == token and row["window_start"] < (base + 600) * 1000
+        ]
+        if len(rows) == 2:
+            assert [row["arrival_count"] for row in rows] == [1, 1], rows
+            assert [row["headway_count"] for row in rows] == [0, 1], rows
+            assert rows[1]["mean_headway_seconds"] == 20, rows
+            assert rows[1]["context_event_count"] == 1, rows
+            report = {"cross_window_smoke": "passed", "agency": token, "metrics": rows}
+            print(json.dumps(report))
+            return report
+        time.sleep(2)
+    raise AssertionError(
+        "cross-window headways did not become queryable before timeout"
+    )

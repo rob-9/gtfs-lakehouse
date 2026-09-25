@@ -70,9 +70,12 @@ serve:
 query:
 	$(RUN) query
 
-.PHONY: smoke
+.PHONY: smoke smoke-headways
 smoke:
 	$(RUN) smoke
+
+smoke-headways:
+	$(RUN) smoke-headways
 
 .PHONY: workers demo
 workers:

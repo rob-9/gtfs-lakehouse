@@ -71,7 +71,7 @@ uv run --project poller --locked python -m gtfs_lakehouse pin var/replay/headway
 uv run --project poller --locked python -m gtfs_lakehouse replay var/replay/headways.json --generation replay-headways
 ```
 
-The first upgrade starts the new calculation at the restored source offsets, so earlier visits are unavailable as context until new telemetry arrives. Existing `live-v2` outputs and defaults remain available. The two-hour lookback, dwell suppression, context digest, and cleanup semantics are specified in `docs/metrics.md`. `make smoke` checks both generations, and the Java harness and independent Python oracle use a shared golden cross-window fixture. Replaying `live-v3` requires its complete admission ledger; a partial pin fails parity before serving writes.
+The first upgrade starts the new calculation at the restored source offsets, so earlier visits are unavailable as context until new telemetry arrives. Existing `live-v2` outputs and defaults remain available. The two-hour lookback, dwell suppression, context digest, and cleanup semantics are specified in `docs/metrics.md`. `make smoke` checks both generations. `make smoke-headways` additionally verifies a real boundary-spanning headway with reverse delivery, a duplicate, and a repeated dwell report. The Java harness and independent Python oracle use a shared golden cross-window fixture. Replaying `live-v3` requires its complete admission ledger; a partial pin fails parity before serving writes.
 
 ## Scheduled-service coverage reports
 
