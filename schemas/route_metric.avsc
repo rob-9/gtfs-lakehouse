@@ -22,6 +22,8 @@
     {"name": "mean_delay_seconds", "type": ["null", "double"], "default": null},
     {"name": "p50_delay_seconds", "type": ["null", "double"], "default": null},
     {"name": "p95_delay_seconds", "type": ["null", "double"], "default": null},
+    {"name": "context_event_count", "type": ["null", "long"], "default": null},
+    {"name": "headway_lookback_seconds", "type": ["null", "long"], "default": null},
     {"name": "mean_headway_seconds", "type": ["null", "double"], "default": null}
   ]
 }

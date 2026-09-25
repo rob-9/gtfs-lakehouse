@@ -60,3 +60,15 @@ The recovery test briefly pauses this project's TaskManager to hold an explicitl
 The exporter reads metadata, committed offsets, and retained log boundaries without subscribing, joining a group, committing offsets, or creating topics. Each group has a two-second collection budget and is collected independently. Failed collections emit a zero health gauge and omit lag samples rather than retaining stale values. Missing commits use the retained beginning offset because these consumers start at earliest; a separate gauge marks missing commits. Out-of-range commits are flagged, and lag is bounded to the retained log.
 
 Lag counts Kafka offsets, including transaction markers and records hidden from read-committed consumers; it is not an exact count of visible events. Flink commits reflect completed checkpoints, so transient lag between checkpoints is expected. Use the group health, missing-commit, and out-of-range panels alongside lag before diagnosing a stalled sink.
+
+## Cross-window headway generation
+
+`make redeploy` preserves the existing route-window operator and adds a checkpointed `live-v3` operator for cross-window headways. New installations run both generations too. Inspect or replay the new results explicitly:
+
+```sh
+uv run --project poller --locked python -m gtfs_lakehouse query --generation live-v3
+uv run --project poller --locked python -m gtfs_lakehouse pin var/replay/headways.json --source-generation live-v3
+uv run --project poller --locked python -m gtfs_lakehouse replay var/replay/headways.json --generation replay-headways
+```
+
+The first upgrade starts the new calculation at the restored source offsets, so earlier visits are unavailable as context until new telemetry arrives. Existing `live-v2` outputs and defaults remain available. The two-hour lookback, dwell suppression, context digest, and cleanup semantics are specified in `docs/metrics.md`. `make smoke` checks both generations, and the Java harness and independent Python oracle use a shared golden cross-window fixture. Replaying `live-v3` requires its complete admission ledger; a partial pin fails parity before serving writes.

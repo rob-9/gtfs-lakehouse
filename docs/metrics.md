@@ -10,7 +10,7 @@ Within a window, select the latest observation by `(observed_at, event_id)` for 
 
 ## Stop observations
 
-A VehiclePosition with explicit `STOPPED_AT` and a stop ID is a stop observation. Retain the earliest such timestamp per trip/stop within each window. Headways compare consecutive distinct trip observations at the same stop within that window. The current detector does not infer arrivals from GPS proximity and does not bridge window boundaries; sparse feeds can therefore undercount arrivals. No headway is emitted from fewer than two observations.
+In the legacy `live-v2` generation, a VehiclePosition with explicit `STOPPED_AT` and a stop ID is a stop observation. Retain the earliest such timestamp per trip/stop within each window. Headways compare consecutive distinct trip observations at the same stop within that window. The current detector does not infer arrivals from GPS proximity and does not bridge window boundaries; sparse feeds can therefore undercount arrivals. No headway is emitted from fewer than two observations.
 
 ## Coverage limits
 
@@ -25,3 +25,13 @@ Both deduplication and window admission persist their watermark cutoff. This pre
 The earlier development generation `live-v1` is retained for auditing. It exposed a provenance mismatch after restart and is not covered by `live-v2` parity reports. New generation defaults keep those historical results separate without deleting source history.
 
 Pipeline visibility latency begins at HTTP body receipt and ends at a successful query probe. It includes window completion and lateness for final results. Source freshness uses observation time and is measured separately. No throughput or latency target has been demonstrated yet.
+
+## Cross-window observed headways (`live-v3`)
+
+The `live-v3` route operator retains first explicit `STOPPED_AT` visits by trip and stop across five-minute boundaries, keyed by agency, route, direction, and service date. It finalizes windows in event-time order after the same two-minute lateness allowance. For each new visit, compare the latest preceding distinct trip at that stop, including earlier windows, and assign the headway to the later visit's window. Equal timestamps are ordered by event ID and may produce a zero headway. Repeated observations of the same trip/stop within the retained horizon are dwell reports and do not add arrivals or headways.
+
+The lookback is two hours, including the boundary; longer gaps do not produce headways. A stop visit first seen more than two hours earlier may be counted again. No comparison crosses route, direction, service-date, or stop boundaries. This remains an explicit-stop detector, not GPS arrival inference, and it does not distinguish repeated visits to the same stop on loop trips. Sparse telemetry can miss visits. State is fixture-scale and retained by event time; when watermarks stop, finalization and cleanup also stop.
+
+The operator checkpoints pending windows, retained visits, and the admission cutoff. Every admitted event is persisted in `metric_inputs` with generation `live-v3`. Aggregate schema version 2 adds `context_event_count` and `headway_lookback_seconds`; the input digest covers current window events plus all retained predecessor-context event IDs. An independent Python oracle replays all pinned closed windows in order and checks the context and final values. Replay requires the original admission ledger; per-window legacy backfills are not safe for this generation.
+
+The original `live-v2` operator and its state remain in the graph for compatible savepoint restores and legacy replay. Both generations are served and stored separately. On the first upgrade, `live-v3` starts from future inputs at the restored source position, with no predecessor context until it observes visits; it does not backfill historical windows. Its first headways therefore have a warm-up boundary. Default queries remain on `live-v2`; select `live-v3` explicitly for cross-window results. Retiring the legacy operator requires a separate state migration.

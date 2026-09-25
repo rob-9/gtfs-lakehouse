@@ -142,6 +142,7 @@ def pipeline(fault=None):
     assert all(row.get("unmatched_reason") is None for row in enriched), enriched
     publish(base + 900)  # Explicit fixture watermark advance, not a wall-clock sleep.
     expected = aggregate(enriched)
+    expected_v3 = aggregate(enriched, generation="live-v3")
     while time.monotonic() < deadline:
         serve(once=True)
         observed = [
@@ -149,7 +150,16 @@ def pipeline(fault=None):
             for row in latest()
             if row["agency_id"] == token and row["window_start"] == base * 1000
         ]
-        if observed:
+        observed_v3 = [
+            row
+            for row in latest("live-v3")
+            if row["agency_id"] == token and row["window_start"] == base * 1000
+        ]
+        if observed and observed_v3:
+            assert observed_v3 == expected_v3, {
+                "observed": observed_v3,
+                "expected": expected_v3,
+            }
             assert observed == expected, {"observed": observed, "expected": expected}
             print(
                 json.dumps(
@@ -158,10 +168,16 @@ def pipeline(fault=None):
                         "agency": token,
                         "events": 4,
                         "metric": observed[0],
+                        "metric_v3": observed_v3[0],
                     }
                 )
             )
-            return {"agency": token, "events": 4, "metric": observed[0]}
+            return {
+                "agency": token,
+                "events": 4,
+                "metric": observed[0],
+                "metric_v3": observed_v3[0],
+            }
         time.sleep(2)
     raise AssertionError(
         "final aggregate did not become queryable before smoke timeout"

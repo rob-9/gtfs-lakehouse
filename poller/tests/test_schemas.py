@@ -43,14 +43,20 @@ def test_normalized_entities_round_trip_through_avro():
         assert restored == record
 
 
-def test_emitted_metric_matches_avro_contract():
+@pytest.mark.parametrize("generation", ["live-v2", "live-v3"])
+def test_emitted_metric_matches_avro_contract(generation):
     from gtfs_lakehouse.fixtures import realtime, static_zip
     from gtfs_lakehouse.oracle import aggregate
     from gtfs_lakehouse.schedules import enrich, parse_archive
 
     events, _ = normalize_feed(realtime(), agency_id="demo", feed_id="f", ingested_at=1)
     schedule = parse_archive(static_zip())
-    (record,) = aggregate([enrich(event.to_dict(), schedule, "v") for event in events])
+    (record,) = aggregate(
+        [enrich(event.to_dict(), schedule, "v") for event in events],
+        generation=generation,
+    )
+    record.setdefault("context_event_count", None)
+    record.setdefault("headway_lookback_seconds", None)
     record["service_date"] = date.fromisoformat(record["service_date"])
     for field in ("window_start", "window_end"):
         record[field] = datetime.fromtimestamp(record[field] / 1000, timezone.utc)
