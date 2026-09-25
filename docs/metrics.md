@@ -18,7 +18,7 @@ Cancellation counts describe reported trip status within the window. Missing tel
 
 ## Consistency and latency
 
-Final rows have revision 1 in the `live-v2` generation. Serving queries choose the latest row explicitly; they do not depend on ClickHouse background merges. Rebuilds use a fresh generation and must pass parity checks before selection. Iceberg and Kafka outputs commit independently and converge after recovery.
+Final rows have revision 1 in the legacy `live-v2` and cross-window `live-v3` generations. Serving queries choose the latest row explicitly; they do not depend on ClickHouse background merges. Rebuilds use a fresh generation and must pass parity checks before selection. Iceberg and Kafka outputs commit independently and converge after recovery.
 
 Both deduplication and window admission persist their watermark cutoff. This prevents recovery from reopening old windows before source watermarks are re-established, a known [Flink recovery consideration](https://issues.apache.org/jira/browse/FLINK-5601). The `metric_inputs` table records the exact admitted records used by the window operator; replay uses this ledger rather than treating every enriched record as an accepted metric input.
 
