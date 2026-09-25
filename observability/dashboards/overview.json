@@ -3,7 +3,10 @@
   "uid": "gtfs-lakehouse",
   "schemaVersion": 39,
   "refresh": "5s",
-  "time": {"from": "now-1h", "to": "now"},
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "panels": [
     {"id": 1, "title": "Running Flink jobs", "type": "stat", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 5}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_flink_running_jobs", "refId": "A"}]},
     {"id": 2, "title": "Final route windows", "type": "stat", "gridPos": {"x": 6, "y": 0, "w": 6, "h": 5}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_serving_windows", "refId": "A"}]},
@@ -18,6 +21,10 @@
     {"id": 11, "title": "Source age (last published snapshot)", "description": "Newest normalized observation in the last acknowledged snapshot. 304 does not refresh this timestamp. Unknown after restart until a snapshot is published; synthetic fixtures are deliberately old.", "type": "timeseries", "gridPos": {"x": 8, "y": 21, "w": 8, "h": 8}, "fieldConfig": {"defaults": {"unit": "s"}}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "time() - gtfs_feed_observed_timestamp_seconds", "legendFormat": "{{agency}} / {{feed}}", "refId": "A"}]},
     {"id": 12, "title": "Pending snapshot age", "type": "timeseries", "gridPos": {"x": 16, "y": 21, "w": 8, "h": 8}, "fieldConfig": {"defaults": {"unit": "s"}}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "(time() - gtfs_outbox_pending_since_timestamp_seconds) and (gtfs_outbox_pending_snapshots > 0)", "legendFormat": "{{agency}} / {{feed}}", "refId": "A"}]},
     {"id": 13, "title": "Pending snapshots", "type": "timeseries", "gridPos": {"x": 0, "y": 29, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_outbox_pending_snapshots", "legendFormat": "{{agency}} / {{feed}}", "refId": "A"}]},
-    {"id": 14, "title": "Acknowledged publications / second", "type": "timeseries", "gridPos": {"x": 12, "y": 29, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "rate(gtfs_poller_published_snapshots_total[5m])", "legendFormat": "{{agency}} / {{feed}}", "refId": "A"}]}
+    {"id": 14, "title": "Acknowledged publications / second", "type": "timeseries", "gridPos": {"x": 12, "y": 29, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "rate(gtfs_poller_published_snapshots_total[5m])", "legendFormat": "{{agency}} / {{feed}}", "refId": "A"}]},
+    {"id": 15, "title": "Kafka group collection healthy", "type": "timeseries", "gridPos": {"x": 0, "y": 37, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "gtfs_kafka_group_collection_up", "legendFormat": "{{group}} / {{topic}}", "refId": "A"}]},
+    {"id": 16, "title": "Kafka committed-offset lag", "type": "timeseries", "gridPos": {"x": 12, "y": 37, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "sum by (group, topic) (gtfs_kafka_consumer_lag)", "legendFormat": "{{group}} / {{topic}}", "refId": "A"}]},
+    {"id": 17, "title": "Kafka partitions without commits", "type": "timeseries", "gridPos": {"x": 0, "y": 45, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "sum by (group, topic) (1 - gtfs_kafka_committed_offset_known)", "legendFormat": "{{group}} / {{topic}}", "refId": "A"}]},
+    {"id": 18, "title": "Kafka offsets outside retained range", "type": "timeseries", "gridPos": {"x": 12, "y": 45, "w": 12, "h": 8}, "datasource": {"uid": "prometheus"}, "targets": [{"expr": "sum by (group, topic) (gtfs_kafka_committed_offset_out_of_range)", "legendFormat": "{{group}} / {{topic}}", "refId": "A"}]}
   ]
 }

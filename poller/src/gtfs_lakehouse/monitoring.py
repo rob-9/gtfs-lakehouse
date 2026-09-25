@@ -4,7 +4,9 @@ import time
 import os
 
 import httpx
-from prometheus_client import Gauge, start_http_server
+from prometheus_client import REGISTRY, Gauge, start_http_server
+
+from .kafka_metrics import KafkaLagCollector
 
 from .serving import latest
 
@@ -27,6 +29,7 @@ def monitor(port=9108):
         "gtfs_serving_prediction_samples",
         "Reported prediction samples in final windows",
     )
+    REGISTRY.register(KafkaLagCollector())
     start_http_server(port, addr="0.0.0.0")
     while True:
         try:
