@@ -72,3 +72,14 @@ uv run --project poller --locked python -m gtfs_lakehouse replay var/replay/head
 ```
 
 The first upgrade starts the new calculation at the restored source offsets, so earlier visits are unavailable as context until new telemetry arrives. Existing `live-v2` outputs and defaults remain available. The two-hour lookback, dwell suppression, context digest, and cleanup semantics are specified in `docs/metrics.md`. `make smoke` checks both generations, and the Java harness and independent Python oracle use a shared golden cross-window fixture. Replaying `live-v3` requires its complete admission ledger; a partial pin fails parity before serving writes.
+
+## Scheduled-service coverage reports
+
+Pin schedules and enriched history, then select the schedule version returned by `load-schedule` or `load-fixture-schedule`:
+
+```sh
+uv run --project poller --locked python -m gtfs_lakehouse pin-coverage var/coverage/inputs.json
+uv run --project poller --locked python -m gtfs_lakehouse coverage var/coverage/inputs.json --agency demo --schedule-version VERSION --service-date 2026-09-10 --as-of 2026-09-10T16:00:00Z --grace-seconds 300 --output var/coverage/report.json
+```
+
+Both pinning and report output refuse to overwrite an existing file. A regular replay manifest also works if it contains schedule and enriched-event snapshots. An absent or empty enriched table is pinned explicitly as empty, so zero telemetry still produces a schedule-derived denominator and never falls back to reading current data. Coverage distinguishes trips not yet due, explicit reported cancellations, telemetry present, and missing telemetry. See `docs/metrics.md` for the denominator and limits; this command reads Iceberg and writes only a local JSON report.

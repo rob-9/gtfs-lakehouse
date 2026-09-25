@@ -14,7 +14,7 @@ In the legacy `live-v2` generation, a VehiclePosition with explicit `STOPPED_AT`
 
 ## Coverage limits
 
-Cancellation counts describe reported trip status within the window. Missing telemetry is not proof of canceled service. Scheduled-trip coverage, cross-window headway deviation, bunching, and inferred observed delay require a schedule-driven service-instance detector and are not yet exposed as complete metrics. The output omits these values rather than inventing denominators.
+Cancellation counts describe reported trip status within the window. Missing telemetry is not proof of canceled service. Scheduled-trip telemetry coverage is available as a bounded, pinned report (below). Headway deviation, bunching, and inferred observed delay are not yet exposed as complete metrics. The output omits these values rather than inventing denominators.
 
 ## Consistency and latency
 
@@ -35,3 +35,13 @@ The lookback is two hours, including the boundary; longer gaps do not produce he
 The operator checkpoints pending windows, retained visits, and the admission cutoff. Every admitted event is persisted in `metric_inputs` with generation `live-v3`. Aggregate schema version 2 adds `context_event_count` and `headway_lookback_seconds`; the input digest covers current window events plus all retained predecessor-context event IDs. An independent Python oracle replays all pinned closed windows in order and checks the context and final values. Replay requires the original admission ledger; per-window legacy backfills are not safe for this generation.
 
 The original `live-v2` operator and its state remain in the graph for compatible savepoint restores and legacy replay. Both generations are served and stored separately. On the first upgrade, `live-v3` starts from future inputs at the restored source position, with no predecessor context until it observes visits; it does not backfill historical windows. Its first headways therefore have a warm-up boundary. Default queries remain on `live-v2`; select `live-v3` explicitly for cross-window results. Retiring the legacy operator requires a separate state migration.
+
+## Scheduled-trip telemetry coverage
+
+`coverage` enumerates every calendar-active trip in an explicitly selected schedule version and service date, including trips with no realtime records. It uses GTFS service time in the agency timezone, including hours beyond 24:00 and daylight-saving transitions. A trip becomes due at its latest scheduled stop departure plus a configurable grace period (default five minutes). Trips before that instant are `not_due` and do not enter the due-service denominator.
+
+For due trips, evidence is restricted to the same agency, service date, and schedule version, with observation time at or before the requested as-of instant. Deduplicate by event ID, then process observations in `(observed_at, event_id)` order. A reported cancellation classifies a trip as `canceled`; only a subsequent TripUpdate reinstates it. A VehiclePosition does not clear a cancellation. Other trips with TripUpdate or VehiclePosition evidence are `telemetry_present`; those without evidence are `missing_telemetry`. Predictions prove telemetry presence, not that service operated. The categories are mutually exclusive, and missing telemetry never implies cancellation.
+
+Per-route/direction summaries expose scheduled, due, not-due, telemetry-present, canceled, and missing-telemetry counts. `telemetry_coverage_rate` is telemetry-present due trips divided by due trips minus reported cancellations; it is null when that denominator is zero. Trip details retain due times, evidence counts, and input digests. The report identifies the exact schedule version and digest, pinned input snapshots, as-of time, grace period, and excluded evidence counts.
+
+This is a bounded report over a named archive, not a continuously finalized streaming metric or an automatic selection of effective schedule versions. A report cannot use an as-of time later than its snapshot collection. Snapshot pinning does not prove ingestion completeness: later ingestion or a newer snapshot may change missing-telemetry classifications. The report uses enriched history (including events not admitted to route windows) because coverage concerns a whole service date. Events enriched against other schedule versions are excluded and counted; choose the appropriate version explicitly rather than treating mixed versions as one denominator.

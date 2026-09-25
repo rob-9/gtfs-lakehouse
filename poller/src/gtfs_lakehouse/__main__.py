@@ -48,6 +48,16 @@ def main():
     replay = commands.add_parser("replay")
     replay.add_argument("manifest")
     replay.add_argument("--generation", required=True)
+    coverage_pin = commands.add_parser("pin-coverage")
+    coverage_pin.add_argument("path")
+    coverage = commands.add_parser("coverage")
+    coverage.add_argument("manifest")
+    coverage.add_argument("--agency", required=True)
+    coverage.add_argument("--schedule-version", required=True)
+    coverage.add_argument("--service-date", required=True)
+    coverage.add_argument("--as-of", required=True)
+    coverage.add_argument("--grace-seconds", type=int, default=300)
+    coverage.add_argument("--output")
     migration = commands.add_parser("migrate-inputs")
     migration.add_argument("manifest")
     migration.add_argument("--apply", action="store_true")
@@ -123,6 +133,24 @@ def main():
                 indent=2,
             )
         )
+    elif args.command == "pin-coverage":
+        from .coverage import pin_coverage
+
+        print(json.dumps(pin_coverage(args.path), indent=2))
+    elif args.command == "coverage":
+        from .coverage import report, write_report
+
+        result = report(
+            json.loads(Path(args.manifest).read_text()),
+            args.agency,
+            args.schedule_version,
+            args.service_date,
+            args.as_of,
+            args.grace_seconds,
+        )
+        if args.output:
+            write_report(args.output, result)
+        print(json.dumps(result, indent=2))
     elif args.command == "migrate-inputs":
         from .replay import migrate_inputs
 
