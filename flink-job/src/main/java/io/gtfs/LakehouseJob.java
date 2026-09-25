@@ -195,19 +195,22 @@ public class LakehouseJob {
     FlinkSink.forRowData(enrichedRows).tableLoader(TableLoader.fromCatalog(catalogLoader, enrichedId)).uidPrefix("enriched-iceberg-v1").writeParallelism(1).append();
     var metrics = enriched.filter(value -> parse(value).path("unmatched_reason").isNull()).uid("matched-only-v1")
         .keyBy(RouteMetrics::key).process(new RouteMetrics()).uid("route-windows-v1");
-    archive(metrics.getSideOutput(RouteMetrics.INPUTS), "metric_inputs", catalogLoader, catalog);
-    metrics.sinkTo(KafkaSink.<String>builder().setBootstrapServers(brokers)
+    var crossWindows = enriched.filter(value -> parse(value).path("unmatched_reason").isNull()).uid("cross-window-matched-v3")
+        .keyBy(CrossWindowMetrics::key).process(new CrossWindowMetrics()).uid("cross-window-metrics-v3");
+    archive(metrics.getSideOutput(RouteMetrics.INPUTS).union(crossWindows.getSideOutput(RouteMetrics.INPUTS)), "metric_inputs", catalogLoader, catalog);
+    var allMetrics = metrics.union(crossWindows);
+    allMetrics.sinkTo(KafkaSink.<String>builder().setBootstrapServers(brokers)
         .setKafkaProducerConfig(producerConfig())
         .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE).setTransactionalIdPrefix("gtfs-metrics-v1-")
         .setRecordSerializer(KafkaRecordSerializationSchema.builder().setTopic("gtfs.route.metrics")
             .setValueSerializationSchema(new SimpleStringSchema()).build()).build()).uid("metrics-kafka-v1");
     var metricId = TableIdentifier.of("gtfs", "route_window_metrics");
     if (!catalog.tableExists(metricId)) catalog.createTable(metricId, HISTORY);
-    var metricRows = metrics.map(value -> (RowData) GenericRowData.of(
+    var metricRows = allMetrics.map(value -> (RowData) GenericRowData.of(
         StringData.fromString(RouteMetrics.key(value)), parse(value).path("window_start").asLong(),
         StringData.fromString(value))).returns(RowData.class).uid("metric-row-v1");
     FlinkSink.forRowData(metricRows).tableLoader(TableLoader.fromCatalog(catalogLoader, metricId)).uidPrefix("metrics-iceberg-v1").writeParallelism(1).append();
-    accepted.getSideOutput(LATE).union(metrics.getSideOutput(LATE)).sinkTo(KafkaSink.<String>builder().setBootstrapServers(brokers)
+    accepted.getSideOutput(LATE).union(metrics.getSideOutput(LATE), crossWindows.getSideOutput(LATE)).sinkTo(KafkaSink.<String>builder().setBootstrapServers(brokers)
         .setKafkaProducerConfig(producerConfig())
         .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE).setTransactionalIdPrefix("gtfs-late-v1-")
         .setRecordSerializer(KafkaRecordSerializationSchema.builder().setTopic("gtfs.late.events")

@@ -54,3 +54,15 @@ The recovery test briefly pauses this project's TaskManager to hold an explicitl
 ## Benchmark evidence
 
 `make benchmark-small` performs one unmeasured warm-up and three measured fixture runs. Reports under `benchmark/artifacts/` include commands, environment, logs, completion times, and parity. This measures end-to-end smoke completion, not sustained events/s. The large replay and throughput targets require separate workload generation, hardware characterization, and load testing.
+
+## Cross-window headway generation
+
+`make redeploy` preserves the existing route-window operator and adds a checkpointed `live-v3` operator for cross-window headways. New installations run both generations too. Inspect or replay the new results explicitly:
+
+```sh
+uv run --project poller --locked python -m gtfs_lakehouse query --generation live-v3
+uv run --project poller --locked python -m gtfs_lakehouse pin var/replay/headways.json --source-generation live-v3
+uv run --project poller --locked python -m gtfs_lakehouse replay var/replay/headways.json --generation replay-headways
+```
+
+The first upgrade starts the new calculation at the restored source offsets, so earlier visits are unavailable as context until new telemetry arrives. Existing `live-v2` outputs and defaults remain available. The two-hour lookback, dwell suppression, context digest, and cleanup semantics are specified in `docs/metrics.md`. `make smoke` checks both generations, and the Java harness and independent Python oracle use a shared golden cross-window fixture. Replaying `live-v3` requires its complete admission ledger; a partial pin fails parity before serving writes.

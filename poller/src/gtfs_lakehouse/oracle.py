@@ -7,7 +7,7 @@ from collections import defaultdict
 WINDOW = 300000
 
 
-def aggregate(events, generation="live-v2"):
+def _windows(events, generation):
     groups = defaultdict(dict)
     for event in events:
         if event.get("unmatched_reason") is not None:
@@ -101,3 +101,84 @@ def aggregate(events, generation="live-v2"):
             )
         )
     return results
+
+
+LOOKBACK = 7_200_000
+
+
+def aggregate(events, generation="live-v2"):
+    events = list(events)
+    rows = _windows(events, generation)
+    if generation != "live-v3":
+        return rows
+    groups = defaultdict(dict)
+    for event in events:
+        if event.get("unmatched_reason") is None:
+            key = (
+                event["agency_id"],
+                event["route_id"],
+                event["direction_id"],
+                event["service_date"],
+                event["observed_at"] // WINDOW * WINDOW,
+            )
+            groups[key][event["event_id"]] = event
+    history = defaultdict(list)
+    for row in rows:
+        route = (
+            row["agency_id"],
+            row["route_id"],
+            row["direction_id"],
+            row["service_date"],
+        )
+        start = row["window_start"]
+        context = [
+            event
+            for event in history[route]
+            if event["observed_at"] >= start - LOOKBACK
+        ]
+        ids = {event["event_id"] for event in context}
+        row.update(
+            schema_version=2,
+            headway_lookback_seconds=LOOKBACK // 1000,
+            context_event_count=len(ids),
+        )
+        ordered = sorted(
+            groups[(*route, start)].values(),
+            key=lambda event: (event["observed_at"], event["event_id"]),
+        )
+        arrivals = 0
+        gaps = []
+        for event in ordered:
+            ids.add(event["event_id"])
+            position = event["payload"].get("vehicle_position") or {}
+            stop = position.get("stop_id")
+            if position.get("current_status") != "STOPPED_AT" or not stop:
+                continue
+            same_stop = [
+                prior
+                for prior in context
+                if prior["payload"]["vehicle_position"]["stop_id"] == stop
+            ]
+            if any(
+                prior["trip_id"] == event["trip_id"]
+                and event["observed_at"] - prior["observed_at"] <= LOOKBACK
+                for prior in same_stop
+            ):
+                continue
+            if same_stop:
+                prior = max(
+                    same_stop, key=lambda item: (item["observed_at"], item["event_id"])
+                )
+                gap = event["observed_at"] - prior["observed_at"]
+                if prior["trip_id"] != event["trip_id"] and gap <= LOOKBACK:
+                    gaps.append(gap / 1000)
+            arrivals += 1
+            context.append(event)
+        history[route] = context
+        row.update(
+            arrival_count=arrivals,
+            headway_count=len(gaps),
+            mean_headway_seconds=sum(gaps) / len(gaps) if gaps else None,
+            input_digest=hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest(),
+        )
+    return rows

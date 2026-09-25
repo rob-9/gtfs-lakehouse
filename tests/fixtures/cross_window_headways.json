@@ -1,0 +1,120 @@
+{
+  "events": [
+    {
+      "event_id": "a",
+      "observed_at": 290000,
+      "agency_id": "demo",
+      "route_id": "R1",
+      "direction_id": 0,
+      "service_date": "2026-09-10",
+      "trip_id": "T1",
+      "vehicle_id": "V1",
+      "payload": {
+        "trip": {},
+        "trip_update": null,
+        "vehicle_position": {
+          "current_status": "STOPPED_AT",
+          "stop_id": "S1"
+        }
+      }
+    },
+    {
+      "event_id": "dwell",
+      "observed_at": 305000,
+      "agency_id": "demo",
+      "route_id": "R1",
+      "direction_id": 0,
+      "service_date": "2026-09-10",
+      "trip_id": "T1",
+      "vehicle_id": "V1",
+      "payload": {
+        "trip": {},
+        "trip_update": null,
+        "vehicle_position": {
+          "current_status": "STOPPED_AT",
+          "stop_id": "S1"
+        }
+      }
+    },
+    {
+      "event_id": "b",
+      "observed_at": 310000,
+      "agency_id": "demo",
+      "route_id": "R1",
+      "direction_id": 0,
+      "service_date": "2026-09-10",
+      "trip_id": "T2",
+      "vehicle_id": "V1",
+      "payload": {
+        "trip": {},
+        "trip_update": null,
+        "vehicle_position": {
+          "current_status": "STOPPED_AT",
+          "stop_id": "S1"
+        }
+      }
+    },
+    {
+      "event_id": "c",
+      "observed_at": 910000,
+      "agency_id": "demo",
+      "route_id": "R1",
+      "direction_id": 0,
+      "service_date": "2026-09-10",
+      "trip_id": "T3",
+      "vehicle_id": "V1",
+      "payload": {
+        "trip": {},
+        "trip_update": null,
+        "vehicle_position": {
+          "current_status": "STOPPED_AT",
+          "stop_id": "S1"
+        }
+      }
+    },
+    {
+      "event_id": "d",
+      "observed_at": 910000,
+      "agency_id": "demo",
+      "route_id": "R1",
+      "direction_id": 0,
+      "service_date": "2026-09-10",
+      "trip_id": "T4",
+      "vehicle_id": "V1",
+      "payload": {
+        "trip": {},
+        "trip_update": null,
+        "vehicle_position": {
+          "current_status": "STOPPED_AT",
+          "stop_id": "S1"
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "window_start": 0,
+      "arrival_count": 1,
+      "headway_count": 0,
+      "mean_headway_seconds": null,
+      "context_event_count": 0,
+      "input_digest": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+    },
+    {
+      "window_start": 300000,
+      "arrival_count": 1,
+      "headway_count": 1,
+      "mean_headway_seconds": 20,
+      "context_event_count": 1,
+      "input_digest": "dbdddd2b858251e195e54185e434ff705625586b253d16e71b728f948ccdb5aa"
+    },
+    {
+      "window_start": 900000,
+      "arrival_count": 2,
+      "headway_count": 2,
+      "mean_headway_seconds": 300,
+      "context_event_count": 2,
+      "input_digest": "f729ae0cbcc8241ebb6918af712a88d5ca2c13f7fbe08f809aa297bfdf99fbe4"
+    }
+  ]
+}

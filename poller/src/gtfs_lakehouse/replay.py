@@ -9,7 +9,9 @@ from .oracle import aggregate
 from .serving import bootstrap, insert, latest
 
 
-def pin(path):
+def pin(path, source_generation="live-v2"):
+    if source_generation not in ("live-v1", "live-v2", "live-v3"):
+        raise ValueError("unknown source generation")
     client = catalog()
     snapshots = {}
     for name in (
@@ -24,7 +26,7 @@ def pin(path):
             raise ValueError(f"{name} has no committed snapshot")
         snapshots[name] = snapshot.snapshot_id
     manifest = {
-        "source_generation": "live-v2",
+        "source_generation": source_generation,
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "snapshots": snapshots,
@@ -46,10 +48,12 @@ def records(manifest, name):
 
 
 def rebuild(manifest, generation):
-    if generation in ("live-v1", "live-v2") or not generation:
+    if generation in ("live-v1", "live-v2", "live-v3") or not generation:
         raise ValueError("rebuild requires a separate nonempty generation")
     # Only compare closed windows present in the pinned aggregate snapshot.
     source_generation = manifest.get("source_generation", "live-v1")
+    if source_generation == "live-v3" and "metric_inputs" not in manifest["snapshots"]:
+        raise ValueError("cross-window replay requires the original admission ledger")
     live = [
         row
         for row in records(manifest, "route_window_metrics")
@@ -124,6 +128,8 @@ def metric_key(row):
 
 def verified_migration_inputs(metrics, inputs, enriched, generation):
     """Recover only fully missing legacy inputs whose entire aggregate and digest match."""
+    if generation == "live-v3":
+        raise ValueError("cross-window inputs require their original admission ledger")
     existing = {
         metric_key(row) for row in inputs if row.get("generation") == generation
     }

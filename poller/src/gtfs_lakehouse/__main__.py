@@ -40,6 +40,11 @@ def main():
     queries.add_argument("--generation", default="live-v2")
     pin = commands.add_parser("pin")
     pin.add_argument("path")
+    pin.add_argument(
+        "--source-generation",
+        choices=["live-v1", "live-v2", "live-v3"],
+        default="live-v2",
+    )
     replay = commands.add_parser("replay")
     replay.add_argument("manifest")
     replay.add_argument("--generation", required=True)
@@ -108,7 +113,7 @@ def main():
     elif args.command == "pin":
         from .replay import pin
 
-        print(json.dumps(pin(args.path), indent=2))
+        print(json.dumps(pin(args.path, args.source_generation), indent=2))
     elif args.command == "replay":
         from .replay import rebuild
 
